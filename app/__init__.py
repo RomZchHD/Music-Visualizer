@@ -1,0 +1,2 @@
+"""Music visualizer application package."""
+
