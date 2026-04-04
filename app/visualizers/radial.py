@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QPainter, QPen, QRadialGradient
 
@@ -27,6 +28,7 @@ class RadialVisualizer(BaseVisualizer):
         )
         if bars.size == 0:
             return
+        bars = np.clip(bars * self.intensity, 0.0, 1.0)
 
         theme = self.config.theme
         center = rect.center()

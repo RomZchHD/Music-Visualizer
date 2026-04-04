@@ -21,6 +21,7 @@ For the MVP, audio files are decoded fully into memory when opened. This avoids 
 ### 5. Extensibility path
 
 Adding a new mode should only require:
+
 - a new renderer class
 - optional new DSP helpers if the mode needs extra derived data
 - registration in the visualizer registry
@@ -34,4 +35,3 @@ If microphone input is added later, the current design can be extended with a se
 - Add microphone capture as a second source mode.
 - Add beat/onset detection and expose it on `AnalysisFrame`.
 - Add theme presets and persisted user settings.
-

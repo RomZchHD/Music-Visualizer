@@ -41,6 +41,7 @@ class VisualizerCanvas(QWidget):
             waveform_points=config.waveform_points,
             spectrum_points=config.fft_size // 2 + 1,
         )
+        self._intensity = config.default_visualizer_intensity
         self._snapshot = PlaybackSnapshot(
             state=TransportState.STOPPED,
             metadata=None,
@@ -52,6 +53,7 @@ class VisualizerCanvas(QWidget):
         )
         self.setMinimumHeight(420)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        self.set_visualizer_intensity(self._intensity)
 
     def set_mode(self, mode_id: str) -> None:
         """Switch the active visualizer."""
@@ -65,6 +67,14 @@ class VisualizerCanvas(QWidget):
 
         self._analysis = analysis
         self._snapshot = snapshot
+        self.update()
+
+    def set_visualizer_intensity(self, intensity: float) -> None:
+        """Update the shared intensity multiplier for every visualizer."""
+
+        self._intensity = intensity
+        for visualizer in self._visualizers.values():
+            visualizer.set_intensity(intensity)
         self.update()
 
     def active_mode_name(self) -> str:
@@ -179,6 +189,7 @@ class MainWindow(QMainWindow):
         self.stop_button = QPushButton("Stop")
         self.mode_combo = QComboBox()
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.intensity_slider = QSlider(Qt.Orientation.Horizontal)
 
         self._setup_ui()
         self._setup_shortcuts()
@@ -196,7 +207,7 @@ class MainWindow(QMainWindow):
             self,
             "Open Audio File",
             str(Path.home()),
-            "Audio Files (*.wav *.flac *.ogg *.aiff *.aif *.mp3);;All Files (*.*)",
+            "Audio Files (*.wav *.flac *.ogg *.opus *.aac *.aiff *.aif *.mp3);;All Files (*.*)",
         )
         if not file_path:
             return
@@ -282,11 +293,18 @@ class MainWindow(QMainWindow):
 
         self.volume_slider.setRange(0, int(self.config.max_volume * 100))
         self.volume_slider.setValue(100)
+        self.intensity_slider.setRange(
+            int(self.config.min_visualizer_intensity * 100),
+            int(self.config.max_visualizer_intensity * 100),
+        )
+        self.intensity_slider.setValue(int(self.config.default_visualizer_intensity * 100))
 
         mode_label = QLabel("Mode")
         mode_label.setObjectName("caption")
         volume_label = QLabel("Volume")
         volume_label.setObjectName("caption")
+        intensity_label = QLabel("Intensity")
+        intensity_label.setObjectName("caption")
 
         controls_layout.addWidget(self.open_button)
         controls_layout.addWidget(self.play_pause_button)
@@ -297,6 +315,9 @@ class MainWindow(QMainWindow):
         controls_layout.addSpacing(8)
         controls_layout.addWidget(volume_label)
         controls_layout.addWidget(self.volume_slider, 1)
+        controls_layout.addSpacing(8)
+        controls_layout.addWidget(intensity_label)
+        controls_layout.addWidget(self.intensity_slider, 1)
 
         root_layout.addWidget(self.canvas, 1)
         root_layout.addWidget(info_panel)
@@ -309,6 +330,7 @@ class MainWindow(QMainWindow):
         self.stop_button.clicked.connect(self.stop_playback)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
+        self.intensity_slider.valueChanged.connect(self._on_intensity_changed)
 
         self.setStyleSheet(
             f"""
@@ -428,6 +450,11 @@ class MainWindow(QMainWindow):
     def _on_volume_changed(self, value: int) -> None:
         self.engine.set_volume(value / 100.0)
         self.statusBar().showMessage(f"Volume {value}%", 1500)
+
+    def _on_intensity_changed(self, value: int) -> None:
+        intensity = value / 100.0
+        self.canvas.set_visualizer_intensity(intensity)
+        self.statusBar().showMessage(f"Visualizer intensity {value}%", 1500)
 
     def _show_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)

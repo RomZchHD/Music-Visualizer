@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.dsp import resample_for_display
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 
@@ -19,6 +20,9 @@ class WaveformVisualizer(BaseVisualizer):
         waveform = frame.waveform
         if waveform.size == 0:
             return
+        target_points = max(96, min(waveform.size, int(rect.width())))
+        if target_points != waveform.size:
+            waveform = resample_for_display(waveform, target_points)
 
         theme = self.config.theme
         left = rect.left() + rect.width() * 0.05
@@ -28,7 +32,7 @@ class WaveformVisualizer(BaseVisualizer):
         center_y = (top + bottom) / 2.0
         amplitude = (bottom - top) / 2.0
 
-        adaptive_gain = min(6.0, 1.0 / max(frame.peak, 0.12))
+        adaptive_gain = min(6.0, 1.0 / max(frame.peak, 0.12)) * self.intensity
         normalized = waveform * adaptive_gain
 
         painter.setPen(QPen(self.with_alpha(theme.panel_border, 90), 1.0))
@@ -47,7 +51,7 @@ class WaveformVisualizer(BaseVisualizer):
             y = center_y - float(max(-1.0, min(1.0, value))) * amplitude
             path.lineTo(x, y)
 
-        glow_pen = QPen(self.with_alpha(theme.accent_secondary, 70), 10.0)
+        glow_pen = QPen(self.with_alpha(theme.accent_secondary, 70), 8.0)
         glow_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         glow_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(glow_pen)

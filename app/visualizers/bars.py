@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 from PySide6.QtCore import QLineF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPen
 
@@ -25,6 +26,7 @@ class BarsVisualizer(BaseVisualizer):
         )
         if bars.size == 0:
             return
+        bars = np.clip(bars * self.intensity, 0.0, 1.0)
 
         theme = self.config.theme
         padding_x = rect.width() * 0.06
@@ -35,7 +37,7 @@ class BarsVisualizer(BaseVisualizer):
         bar_width = max(4.0, (inner_width - gap * (bars.size - 1)) / bars.size)
         max_height = bottom - top
 
-        glow_height = rect.height() * 0.18 * max(frame.bands.bass, 0.06)
+        glow_height = rect.height() * 0.18 * max(frame.bands.bass * self.intensity, 0.06)
         painter.fillRect(
             QRectF(rect.left(), bottom - glow_height, rect.width(), glow_height),
             self.with_alpha(theme.accent_bass, 40),

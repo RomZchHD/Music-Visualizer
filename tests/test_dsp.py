@@ -16,6 +16,7 @@ def make_config() -> AppConfig:
     return AppConfig(
         fft_size=2048,
         waveform_points=256,
+        waveform_window_frames=128,
         bar_count=32,
         radial_bar_count=48,
     )
@@ -60,3 +61,23 @@ def test_spectrum_to_bars_matches_requested_count() -> None:
     assert bars.shape == (48,)
     assert np.all(bars >= 0.0)
     assert np.all(bars <= 1.0)
+
+
+def test_analyzer_waveform_prefers_recent_window() -> None:
+    config = AppConfig(
+        fft_size=128,
+        waveform_points=32,
+        waveform_window_frames=32,
+    )
+    analyzer = AudioAnalyzer(sample_rate=48_000, config=config)
+    signal = np.concatenate(
+        [
+            np.ones(128, dtype=np.float32),
+            np.zeros(32, dtype=np.float32),
+        ]
+    )
+
+    frame = analyzer.analyze(signal)
+
+    assert frame.waveform.shape == (32,)
+    assert float(np.max(np.abs(frame.waveform))) < 0.01

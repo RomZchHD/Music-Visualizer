@@ -34,11 +34,15 @@ class AppConfig:
     min_width: int = 1024
     min_height: int = 680
     ui_fps: int = 60
-    audio_block_size: int = 1024
+    audio_block_size: int = 512
     fft_size: int = 2048
-    waveform_points: int = 1024
+    waveform_points: int = 640
+    waveform_window_frames: int = 1024
     bar_count: int = 64
     radial_bar_count: int = 96
+    default_visualizer_intensity: float = 0.65
+    min_visualizer_intensity: float = 0.25
+    max_visualizer_intensity: float = 1.2
     spectrum_smoothing: float = 0.72
     band_smoothing: float = 0.82
     reference_smoothing: float = 0.92
@@ -52,4 +56,3 @@ class AppConfig:
 
 
 DEFAULT_CONFIG = AppConfig()
-

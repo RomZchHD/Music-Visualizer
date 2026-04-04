@@ -155,9 +155,13 @@ class AudioAnalyzer:
         """Analyze a recent block of audio and return display-ready values."""
 
         mono = to_mono(samples)
-        waveform = resample_for_display(mono, self.config.waveform_points)
-        peak = float(np.max(np.abs(mono))) if mono.size else 0.0
-        rms = compute_rms(mono)
+        waveform_source = mono[-self.config.waveform_window_frames :]
+        if waveform_source.size == 0:
+            waveform_source = mono
+
+        waveform = resample_for_display(waveform_source, self.config.waveform_points)
+        peak = float(np.max(np.abs(waveform_source))) if waveform_source.size else 0.0
+        rms = compute_rms(waveform_source)
 
         fft_input = np.zeros(self.config.fft_size, dtype=np.float32)
         tail = mono[-self.config.fft_size :]

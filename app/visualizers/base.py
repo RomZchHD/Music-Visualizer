@@ -20,10 +20,20 @@ class BaseVisualizer(ABC):
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
+        self.intensity = config.default_visualizer_intensity
 
     @abstractmethod
     def render(self, painter: QPainter, rect: QRectF, frame: AnalysisFrame) -> None:
         """Draw the latest analysis frame into the provided rectangle."""
+
+    def set_intensity(self, intensity: float) -> None:
+        """Set the current visualizer intensity multiplier."""
+
+        self.intensity = clamp(
+            intensity,
+            self.config.min_visualizer_intensity,
+            self.config.max_visualizer_intensity,
+        )
 
     def with_alpha(self, color: str | QColor, alpha: int) -> QColor:
         """Return a color with the requested alpha channel."""
@@ -44,4 +54,3 @@ class BaseVisualizer(ABC):
             int(start_color.blue() + (end_color.blue() - start_color.blue()) * t),
             int(start_color.alpha() + (end_color.alpha() - start_color.alpha()) * t),
         )
-

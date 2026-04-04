@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import io
+import shutil
+import subprocess
 import threading
 from pathlib import Path
 
@@ -42,7 +45,7 @@ class AudioEngine:
         self._error_message: str | None = None
         self._analysis_window_frames = max(
             self.config.fft_size,
-            self.config.waveform_points * 2,
+            self.config.waveform_window_frames,
         )
 
     def load_file(self, path: str | Path) -> AudioMetadata:
@@ -52,11 +55,7 @@ class AudioEngine:
         self._close_stream()
 
         try:
-            audio_data, sample_rate = sf.read(
-                resolved_path,
-                dtype="float32",
-                always_2d=True,
-            )
+            audio_data, sample_rate = self._read_audio_file(resolved_path)
         except Exception as exc:  # pragma: no cover - depends on codecs/environment
             raise RuntimeError(f"Could not read audio file: {exc}") from exc
 
@@ -82,10 +81,7 @@ class AudioEngine:
             self._current_frame = 0
             self._state = TransportState.STOPPED
             self._error_message = None
-            self._analysis = analyzer.analyze(
-                prepared_data[: self._analysis_window_frames],
-                timestamp=0.0,
-            )
+            self._prime_analysis_locked()
 
         return metadata
 
@@ -97,14 +93,14 @@ class AudioEngine:
                 raise RuntimeError("Open an audio file before pressing play.")
             if self._current_frame >= self._metadata.frames:
                 self._current_frame = 0
-                if self._analyzer is not None:
-                    self._analysis = self._analyzer.analyze(
-                        self._data[: self._analysis_window_frames],
-                        timestamp=0.0,
-                    )
+                self._prime_analysis_locked()
+            recreate_stream = self._stream is not None and not self._stream.active
             stream_is_active = self._stream is not None and self._stream.active
             self._state = TransportState.PLAYING
             self._error_message = None
+
+        if recreate_stream:
+            self._close_stream()
 
         if stream_is_active:
             return
@@ -134,10 +130,7 @@ class AudioEngine:
             self._state = TransportState.STOPPED
             self._current_frame = 0
             if self._data is not None and self._analyzer is not None:
-                self._analysis = self._analyzer.analyze(
-                    self._data[: self._analysis_window_frames],
-                    timestamp=0.0,
-                )
+                self._prime_analysis_locked()
             else:
                 self._analysis = make_empty_analysis_frame(
                     sample_rate=48_000,
@@ -223,6 +216,64 @@ class AudioEngine:
         if prepared.shape[1] <= 2:
             return prepared
         return prepared[:, :2].astype(np.float32, copy=False)
+
+    def _read_audio_file(self, path: Path) -> tuple[np.ndarray, int]:
+        try:
+            return sf.read(path, dtype="float32", always_2d=True)
+        except Exception as soundfile_error:
+            return self._decode_with_ffmpeg(path, soundfile_error)
+
+    def _decode_with_ffmpeg(
+        self,
+        path: Path,
+        original_error: Exception,
+    ) -> tuple[np.ndarray, int]:
+        ffmpeg_binary = shutil.which("ffmpeg")
+        if ffmpeg_binary is None:
+            raise RuntimeError(
+                "soundfile could not decode this file and ffmpeg was not found on PATH. "
+                "Install ffmpeg for AAC/Opus fallback support."
+            ) from original_error
+
+        command = [
+            ffmpeg_binary,
+            "-v",
+            "error",
+            "-vn",
+            "-i",
+            str(path),
+            "-f",
+            "wav",
+            "-acodec",
+            "pcm_f32le",
+            "pipe:1",
+        ]
+        process = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if process.returncode != 0:
+            ffmpeg_message = process.stderr.decode("utf-8", errors="replace").strip()
+            if not ffmpeg_message:
+                ffmpeg_message = "ffmpeg could not decode the selected file."
+            raise RuntimeError(ffmpeg_message) from original_error
+
+        try:
+            return sf.read(io.BytesIO(process.stdout), dtype="float32", always_2d=True)
+        except Exception as ffmpeg_decode_error:
+            raise RuntimeError(
+                "ffmpeg produced audio data, but the WAV fallback stream could not be parsed."
+            ) from ffmpeg_decode_error
+
+    def _prime_analysis_locked(self) -> None:
+        if self._data is None or self._analyzer is None:
+            return
+        self._analysis = self._analyzer.analyze(
+            self._data[: self._analysis_window_frames],
+            timestamp=0.0,
+        )
 
     def _audio_callback(
         self,
