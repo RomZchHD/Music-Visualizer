@@ -37,7 +37,7 @@ class AppConfig:
     audio_block_size: int = 512
     fft_size: int = 2048
     waveform_points: int = 640
-    waveform_window_frames: int = 1024
+    waveform_window_frames: int = 512
     bar_count: int = 64
     radial_bar_count: int = 96
     default_visualizer_intensity: float = 0.65

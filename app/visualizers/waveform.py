@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 from app.dsp import resample_for_display
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
@@ -32,8 +33,10 @@ class WaveformVisualizer(BaseVisualizer):
         center_y = (top + bottom) / 2.0
         amplitude = (bottom - top) / 2.0
 
-        adaptive_gain = min(6.0, 1.0 / max(frame.peak, 0.12)) * self.intensity
-        normalized = waveform * adaptive_gain
+        # Keep waveform response immediate by using a fixed visual gain plus soft clipping,
+        # instead of re-scaling against the latest peak every frame.
+        visual_gain = 1.6 + self.intensity * 1.8
+        normalized = np.tanh(waveform * visual_gain).astype(np.float32)
 
         painter.setPen(QPen(self.with_alpha(theme.panel_border, 90), 1.0))
         painter.drawLine(QLineF(left, center_y, right, center_y))

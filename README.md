@@ -9,6 +9,7 @@ It is designed as a real, extensible desktop app rather than a one-file demo. Th
 PulseCanvas can:
 
 - open an audio file from disk
+- open an audio file by dragging it onto the window
 - play, pause, stop, and replay the file after it finishes
 - compute real-time waveform and FFT spectrum data
 - compute smoothed bass, mids, and treble energy
@@ -43,6 +44,7 @@ If `soundfile` cannot decode a file, PulseCanvas will automatically try `ffmpeg`
 ## Controls
 
 - `Open File`: choose a track from disk
+- Drag and drop: drop a local audio file anywhere on the window to load it
 - `Play`: start playback or replay from the start if the file already ended
 - `Pause`: pause playback
 - `Stop`: stop playback and reset to the start
@@ -155,7 +157,7 @@ The current tests cover:
 - `numpy` is used for low-overhead frame analysis and FFT-based spectral features.
 - `sounddevice` keeps audio playback low-latency and lets audio timing drive the visuals.
 - Visualizer modes are plug-in classes with a shared `BaseVisualizer` interface.
-- The waveform visualizer now uses a shorter recent window than the FFT path so it feels more immediate.
+- The waveform visualizer now uses a shorter recent window and fixed visual gain with soft clipping, so loud passages respond more immediately instead of visually riding the recent peak.
 
 ## Known Limitations
 
@@ -167,7 +169,7 @@ The current tests cover:
 
 ## How To Add A New Visualizer Mode
 
-1. Create a new renderer class under [`app/visualizers`](/d:/Music%20Visualizer/app/visualizers).
+1. Create a new renderer class under /d:/Music%20Visualizer/app/visualizers.
 2. Subclass [`BaseVisualizer`](/d:/Music%20Visualizer/app/visualizers/base.py).
 3. Give the class a unique `mode_id` and `display_name`.
 4. Implement `render(self, painter, rect, frame)`.

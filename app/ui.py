@@ -4,8 +4,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QCloseEvent, QFont, QKeySequence, QLinearGradient, QPainter, QPaintEvent, QShortcut
+from PySide6.QtCore import QRectF, Qt, QTimer, QUrl
+from PySide6.QtGui import (
+    QColor,
+    QCloseEvent,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QFont,
+    QKeySequence,
+    QLinearGradient,
+    QPainter,
+    QPaintEvent,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QFileDialog,
     QComboBox,
@@ -195,10 +207,33 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self._setup_timer()
         self._refresh_from_engine()
+        self.setAcceptDrops(True)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.engine.close()
         super().closeEvent(event)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._extract_first_local_file(event.mimeData().urls()) is not None:
+            event.acceptProposedAction()
+            self.statusBar().showMessage("Drop to open audio file", 1500)
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if self._extract_first_local_file(event.mimeData().urls()) is not None:
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        path = self._extract_first_local_file(event.mimeData().urls())
+        if path is None:
+            event.ignore()
+            return
+
+        event.acceptProposedAction()
+        self._load_file(path)
 
     def open_file_dialog(self) -> None:
         """Show an audio picker and load the selected file."""
@@ -459,3 +494,12 @@ class MainWindow(QMainWindow):
     def _show_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)
         self.statusBar().showMessage(message, 7000)
+
+    @staticmethod
+    def _extract_first_local_file(urls: list[QUrl]) -> str | None:
+        for url in urls:
+            if url.isLocalFile():
+                local_path = url.toLocalFile()
+                if local_path:
+                    return local_path
+        return None
