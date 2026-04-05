@@ -99,7 +99,10 @@ class WaveformVisualizer(BaseVisualizer):
             ],
             dtype=np.float32,
         )
-        values = 1.0 - np.exp(-values * 3.6)
+        ratio = self.intensity_ratio()
+        gain = 2.4 + ratio * 5.2
+        values = 1.0 - np.exp(-values * gain)
+        values = np.power(np.clip(values, 0.0, 1.0), 1.16 - ratio * 0.34)
         kernel = np.array([1.0, 2.0, 3.0, 2.0, 1.0], dtype=np.float32)
         kernel /= kernel.sum()
         padded = np.pad(values, (2, 2), mode="edge")

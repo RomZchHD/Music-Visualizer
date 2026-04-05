@@ -1,4 +1,4 @@
-"""Tests for audio engine behaviors that do not require live audio output."""
+"""Tests for source-controller and file-playback behaviors."""
 
 from __future__ import annotations
 
@@ -10,21 +10,19 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-import app.audio_engine as audio_engine_module
 from app.audio_engine import AudioEngine
+from app.audio_sources import file_playback as file_playback_module
 from app.config import AppConfig
+from app.models import AudioSourceMode
 
 
 class FakeOutputStream:
     """Small fake stream used to test replay behavior."""
 
-    instances: list["FakeOutputStream"] = []
-
     def __init__(self, *args: object, **kwargs: object) -> None:
         del args, kwargs
         self.active = False
         self.closed = False
-        FakeOutputStream.instances.append(self)
 
     def start(self) -> None:
         self.active = True
@@ -70,29 +68,49 @@ def test_play_after_end_recreates_stream(tmp_path: Path, monkeypatch: pytest.Mon
     engine = AudioEngine(make_engine_config())
     metadata = engine.load_file(source_path)
 
-    monkeypatch.setattr(audio_engine_module.sd, "OutputStream", FakeOutputStream)
+    monkeypatch.setattr(file_playback_module.sd, "OutputStream", FakeOutputStream)
     exhausted_stream = FakeOutputStream()
-    engine._stream = exhausted_stream
-    engine._current_frame = metadata.frames
+    engine._file_source._stream = exhausted_stream
+    engine._file_source._current_frame = metadata.frames
 
     engine.play()
 
     assert exhausted_stream.closed is True
     assert engine.get_snapshot().state.value == "Playing"
-    assert engine._current_frame == 0
-    assert engine._stream is not None
-    assert engine._stream is not exhausted_stream
-    assert engine._stream.active is True
+    assert engine._file_source._current_frame == 0
+    assert engine._file_source._stream is not None
+    assert engine._file_source._stream is not exhausted_stream
+    assert engine._file_source._stream.active is True
 
 
 def test_estimate_output_latency_seconds_uses_callback_timing() -> None:
     engine = AudioEngine(make_engine_config())
 
-    latency = engine._estimate_output_latency_seconds(
+    latency = engine._file_source._estimate_output_latency_seconds(
         FakeTimeInfo(current_time=1.0, output_buffer_dac_time=1.02)
     )
 
     assert latency == pytest.approx(0.02, rel=1e-4)
+
+
+def test_source_mode_switch_stops_previous_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = AudioEngine(make_engine_config())
+    calls: list[str] = []
+
+    monkeypatch.setattr(engine._file_source, "stop", lambda: calls.append("file"))
+    monkeypatch.setattr(engine._system_source, "availability_error", lambda: None)
+    monkeypatch.setattr(engine._system_source, "refresh_devices", lambda: [])
+
+    engine.set_source_mode(AudioSourceMode.SYSTEM)
+
+    assert engine.get_source_mode() == AudioSourceMode.SYSTEM
+    assert calls == ["file"]
+
+    monkeypatch.setattr(engine._system_source, "stop", lambda: calls.append("system"))
+    engine.set_source_mode(AudioSourceMode.FILE)
+
+    assert engine.get_source_mode() == AudioSourceMode.FILE
+    assert calls == ["file", "system"]
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is required for codec fallback tests")

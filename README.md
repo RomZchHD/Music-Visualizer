@@ -1,31 +1,49 @@
 # PulseCanvas Music Visualizer
 
-PulseCanvas is a desktop music visualizer built with Python, `PySide6`, `numpy`, `sounddevice`, and `soundfile`.
+PulseCanvas is a desktop music visualizer built with Python, `PySide6`, `numpy`, `sounddevice`, `soundfile`, and Windows loopback capture via `soundcard`.
 
-It is designed as a real, extensible desktop app rather than a one-file demo. The project separates playback, DSP analysis, UI, and visualizer modes so it is easy to keep improving.
+It supports two source modes:
 
-## What The App Does
+- `File`: open and play a local audio file while visualizing it
+- `System Audio (Windows)`: visualize whatever Windows is currently sending to a selected output device through WASAPI loopback
 
-PulseCanvas can:
+The app keeps playback/capture, DSP, UI, and visualizers separate so new source types and renderer modes can be added without rewriting the whole project.
+
+## Features
 
 - open an audio file from disk
 - open an audio file by dragging it onto the window
-- play, pause, stop, and replay the file after it finishes
-- compute real-time waveform and FFT spectrum data
-- compute smoothed bass, mids, and treble energy
-- switch visualizer modes while audio is playing
+- play, pause, stop, and replay files after they finish
+- visualize live Windows system audio without microphone capture
+- choose the Windows output device used for loopback capture
+- refresh the device list without restarting the app
+- compute real-time waveform, FFT spectrum, peak, RMS, and bass/mids/treble energy
+- switch visualizer modes while audio is active
 - render three built-in modes:
   - spectrum bars
-  - waveform oscilloscope
+  - waveform
   - radial spectrum
-- control playback volume
-- control visualizer intensity with a dedicated slider
-- show the current track name, transport state, and playback time
+- control playback volume for file mode
+- control visualizer intensity separately from audio volume
+- show the active source, status, and either playback time or selected device
 - toggle fullscreen
+
+## Windows System Audio Support
+
+System audio mode is Windows 10 only for now.
+
+It uses WASAPI loopback capture through the `soundcard` package:
+
+- it captures the selected Windows output device
+- it does not use a microphone
+- it does not require Stereo Mix or vendor-specific drivers
+- it does not play the captured audio back out, so it does not create monitoring echo
+
+If nothing is currently playing through Windows, the visuals naturally settle toward silence.
 
 ## Supported Audio Formats
 
-Directly supported through the normal decode path:
+Direct decode path:
 
 - `.wav`
 - `.flac`
@@ -34,35 +52,43 @@ Directly supported through the normal decode path:
 - `.aiff`
 - `.aif`
 
-Also supported through an `ffmpeg` fallback path:
+`ffmpeg` fallback path:
 
 - `.aac`
 - `.opus`
 
-If `soundfile` cannot decode a file, PulseCanvas will automatically try `ffmpeg` if it is available on your system `PATH`.
+If `soundfile` cannot decode a file directly, PulseCanvas automatically tries `ffmpeg` when it is available on `PATH`.
 
 ## Controls
 
-- `Open File`: choose a track from disk
-- Drag and drop: drop a local audio file anywhere on the window to load it
-- `Play`: start playback or replay from the start if the file already ended
-- `Pause`: pause playback
-- `Stop`: stop playback and reset to the start
-- `Mode`: switch between visualizers at runtime
-- `Volume`: adjust playback output level
-- `Intensity`: scale the visual response without changing the audio volume
+Main controls:
+
+- `Source`: switch between `File` and `System Audio (Windows)`
+- `Open File`: load a local track in file mode
+- `Play` / `Pause`: file transport control
+- `Start Capture`: start Windows loopback capture in system-audio mode
+- `Stop`: stop file playback or stop system-audio capture
+- `Output`: choose the Windows output device used for loopback capture
+- `Refresh Devices`: rescan Windows output devices
+- `Mode`: switch visualizer renderer
+- `Volume`: file playback volume
+- `Intensity`: visual response shaping
+
+Source-specific behavior:
+
+- In `File` mode, transport controls behave like a normal player.
+- In `System Audio (Windows)` mode, file-only controls are disabled and the app shows the selected output device instead of file position.
+- Drag-and-drop always loads a file and switches the app back to `File` mode.
 
 Keyboard shortcuts:
 
-- `Space`: play/pause
+- `Space`: play/pause in file mode, start capture in system-audio mode
 - `1`: spectrum bars
 - `2`: waveform
 - `3`: radial spectrum
 - `F`: fullscreen
 
-## Architecture
-
-Project layout:
+## Project Layout
 
 ```text
 main.py
@@ -71,6 +97,11 @@ app/
   __main__.py
   main.py
   audio_engine.py
+  audio_sources/
+    __init__.py
+    base.py
+    file_playback.py
+    system_loopback.py
   config.py
   dsp.py
   models.py
@@ -83,112 +114,130 @@ app/
     waveform.py
     radial.py
 tests/
+  conftest.py
   test_audio_engine.py
   test_dsp.py
+  test_system_loopback.py
+  test_ui.py
 DEVELOPER_NOTES.md
 pyproject.toml
 ```
 
+## Architecture
+
 High-level flow:
 
-1. `soundfile` loads the selected file when possible.
-2. If that fails, `ffmpeg` is used as a decode fallback for formats such as AAC and Opus.
-3. `sounddevice` plays audio through a low-latency output stream.
-4. `AudioAnalyzer` in [`app/dsp.py`](/d:/Music%20Visualizer/app/dsp.py) computes waveform, spectrum, peak, RMS, and band energies.
-5. The Qt UI in [`app/ui.py`](/d:/Music%20Visualizer/app/ui.py) polls the latest analysis frame and repaints the active renderer.
+1. [`app/audio_engine.py`](/d:/Music%20Visualizer/app/audio_engine.py) owns the active source mode and exposes one controller API to the UI.
+2. [`app/audio_sources/file_playback.py`](/d:/Music%20Visualizer/app/audio_sources/file_playback.py) handles decoded file playback through `sounddevice`.
+3. [`app/audio_sources/system_loopback.py`](/d:/Music%20Visualizer/app/audio_sources/system_loopback.py) handles Windows WASAPI loopback capture through `soundcard`.
+4. [`app/dsp.py`](/d:/Music%20Visualizer/app/dsp.py) turns recent samples into waveform, spectrum, peak, RMS, and band-energy data.
+5. [`app/ui.py`](/d:/Music%20Visualizer/app/ui.py) polls the latest `AnalysisFrame` and repaints the active visualizer.
+
+Both source types feed the same `AnalysisFrame`, so the visualizers do not need a separate code path for file playback versus system audio.
 
 ## Installation
 
 Requirements:
 
 - Python 3.11+
+- Windows 10 for `System Audio (Windows)` mode
 - `ffmpeg` on `PATH` if you want AAC/Opus fallback support
 
-Install the project:
+Install in editable mode:
 
 ```powershell
 py -3.11 -m pip install -e ".[dev]"
 ```
 
-If you do not need editable mode:
+Install without editable mode:
 
 ```powershell
 py -3.11 -m pip install ".[dev]"
 ```
 
+On Windows, the `soundcard` dependency is installed automatically from `pyproject.toml`.
+
 ## Run
 
-Run from the repo:
+From the repo:
 
 ```powershell
 py -3.11 main.py
 ```
 
-Or, after installation:
-
-```powershell
-music-visualizer
-```
-
-You can also launch with:
+Module entrypoint:
 
 ```powershell
 py -3.11 -m app
 ```
 
+Installed script:
+
+```powershell
+music-visualizer
+```
+
 ## Testing
 
-Run the test suite:
+Run the suite:
 
 ```powershell
 py -3.11 -m pytest
 ```
 
-The current tests cover:
+Current coverage includes:
 
 - DSP helper behavior
-- waveform window responsiveness
 - replaying after end-of-file
-- loading AAC and Opus files when `ffmpeg` is available
+- source-mode switching lifecycle
+- loopback chunk normalization and rechunking
+- loopback cleanup behavior
+- UI state toggles between file and system-audio modes
+- AAC/Opus loading when `ffmpeg` is available
 
-## Major Design Choices
+## How To Use System Audio Mode
 
-- `PySide6` was chosen for a native desktop UI and flexible custom drawing.
-- `numpy` is used for low-overhead frame analysis and FFT-based spectral features.
-- `sounddevice` keeps audio playback low-latency and lets audio timing drive the visuals.
-- Visualizer modes are plug-in classes with a shared `BaseVisualizer` interface.
-- The waveform visualizer now uses a shorter recent window and fixed visual gain with soft clipping, so loud passages respond more immediately instead of visually riding the recent peak.
+1. Launch the app on Windows 10.
+2. Change `Source` to `System Audio (Windows)`.
+3. Choose the desired speaker/output device in `Output`.
+4. Click `Start Capture`.
+5. Play audio in another app such as a browser, media player, or Spotify.
+6. Click `Stop` to release the loopback device.
 
-## Known Limitations
-
-- Files are currently decoded fully into memory when opened.
-- There is no seek/scrub transport yet.
-- Live microphone or system-loopback input is not implemented yet.
-- AAC/Opus fallback depends on `ffmpeg` being installed and reachable from `PATH`.
-- Rendering quality and latency can still vary by GPU driver, Qt backend, and audio device.
+If the selected output device changes or disappears, use `Refresh Devices` and choose the new one.
 
 ## How To Add A New Visualizer Mode
 
-1. Create a new renderer class under /d:/Music%20Visualizer/app/visualizers.
+1. Create a new renderer under [`app/visualizers`](/d:/Music%20Visualizer/app/visualizers).
 2. Subclass [`BaseVisualizer`](/d:/Music%20Visualizer/app/visualizers/base.py).
-3. Give the class a unique `mode_id` and `display_name`.
+3. Add a unique `mode_id` and `display_name`.
 4. Implement `render(self, painter, rect, frame)`.
-5. Register the visualizer in [`app/visualizers/__init__.py`](/d:/Music%20Visualizer/app/visualizers/__init__.py).
+5. Register the class in [`app/visualizers/__init__.py`](/d:/Music%20Visualizer/app/visualizers/__init__.py).
 
-The shared `AnalysisFrame` already contains:
+The shared `AnalysisFrame` already includes:
 
 - `waveform`
 - `spectrum`
 - `bands`
 - `peak`
 - `rms`
+- `sample_rate`
 - `timestamp`
 
-Each renderer also receives the shared intensity multiplier through `BaseVisualizer`.
+## Known Limitations
+
+- System audio mode is implemented for Windows 10 only.
+- There is no microphone capture path.
+- Files are still decoded fully into memory when opened.
+- There is no seek/scrub transport yet.
+- AAC/Opus fallback depends on `ffmpeg` being installed and reachable from `PATH`.
+- Loopback startup can still depend on the selected device and Windows audio-driver behavior.
+- Rendering smoothness can vary by GPU driver, Qt backend, and display refresh rate.
 
 ## Troubleshooting
 
-- If a file will not open, try a WAV file first to confirm the basic decode path works.
+- If a file will not open, try a WAV file first to confirm the base decode path works.
 - If AAC or Opus files fail, verify `ffmpeg -version` works in your terminal.
-- If playback works once but not again, update to the latest project version; replay-after-end is handled explicitly in the current engine.
-- If the waveform feels too aggressive or too subtle, adjust the `Intensity` slider instead of the `Volume` slider.
+- If `System Audio (Windows)` is unavailable, confirm you installed the Windows dependency set and that the `soundcard` package imports correctly.
+- If capture starts but you see silence, check that Windows is currently sending audio to the selected output device.
+- If you change speakers or unplug an interface, use `Refresh Devices` before starting capture again.

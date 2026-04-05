@@ -21,6 +21,13 @@ class TransportState(str, Enum):
     PAUSED = "Paused"
 
 
+class AudioSourceMode(str, Enum):
+    """Active source mode exposed to the UI."""
+
+    FILE = "file"
+    SYSTEM = "system"
+
+
 @dataclass(frozen=True)
 class BandEnergy:
     """Aggregated energy across broad frequency regions."""
@@ -40,6 +47,15 @@ class AudioMetadata:
     channels: int
     frames: int
     duration: float
+
+
+@dataclass(frozen=True)
+class AudioDeviceInfo:
+    """Selectable output device for system-audio loopback capture."""
+
+    identifier: str
+    name: str
+    is_default: bool = False
 
 
 @dataclass(frozen=True)
@@ -65,6 +81,15 @@ class PlaybackSnapshot:
     duration: float
     volume: float
     stream_active: bool
+    source_mode: AudioSourceMode = AudioSourceMode.FILE
+    source_name: str = "No file loaded"
+    detail_text: str = "00:00 / 00:00"
+    status_text: str = TransportState.STOPPED.value
+    primary_action_label: str = "Play"
+    primary_action_enabled: bool = True
+    open_file_enabled: bool = True
+    stop_enabled: bool = False
+    volume_enabled: bool = True
     error_message: str | None = None
 
 
@@ -84,4 +109,3 @@ def make_empty_analysis_frame(
         sample_rate=sample_rate,
         timestamp=0.0,
     )
-

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt, QTimer, QUrl
+from PySide6.QtCore import QRectF, Qt, QTimer, QUrl, QSignalBlocker
 from PySide6.QtGui import (
     QColor,
     QCloseEvent,
@@ -34,8 +34,13 @@ from PySide6.QtWidgets import (
 
 from app.audio_engine import AudioEngine
 from app.config import AppConfig, DEFAULT_CONFIG
-from app.models import AnalysisFrame, PlaybackSnapshot, TransportState, make_empty_analysis_frame
-from app.utils import format_seconds
+from app.models import (
+    AnalysisFrame,
+    AudioSourceMode,
+    PlaybackSnapshot,
+    TransportState,
+    make_empty_analysis_frame,
+)
 from app.visualizers import build_visualizers
 from app.visualizers.base import BaseVisualizer
 
@@ -134,7 +139,7 @@ class VisualizerCanvas(QWidget):
         )
 
         content_rect = QRectF(self.rect()).adjusted(28.0, 28.0, -28.0, -28.0)
-        if self._snapshot.metadata is None:
+        if self._snapshot.source_mode == AudioSourceMode.FILE and self._snapshot.metadata is None:
             self._draw_empty_state(painter, content_rect)
             return
 
@@ -147,7 +152,14 @@ class VisualizerCanvas(QWidget):
         title_font = QFont("Segoe UI", 20)
         title_font.setBold(True)
         painter.setFont(title_font)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Open an audio file to start visualizing")
+        if self._snapshot.source_mode == AudioSourceMode.SYSTEM:
+            title = "Start system audio capture to visualize Windows output"
+            subtitle = "Loopback capture uses your selected speaker device and never records the microphone."
+        else:
+            title = "Open an audio file to start visualizing"
+            subtitle = "Modes: spectrum bars, waveform, radial spectrum. Shortcuts: Space, 1/2/3, F."
+
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, title)
 
         painter.setPen(QColor(theme.text_secondary))
         subtitle_rect = rect.adjusted(0.0, 48.0, 0.0, 0.0)
@@ -155,7 +167,7 @@ class VisualizerCanvas(QWidget):
         painter.drawText(
             subtitle_rect,
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-            "Modes: spectrum bars, waveform, radial spectrum. Shortcuts: Space, 1/2/3, F.",
+            subtitle,
         )
 
     def _draw_overlay(self, painter: QPainter, rect: QRectF) -> None:
@@ -175,7 +187,7 @@ class VisualizerCanvas(QWidget):
         painter.drawText(
             rect.adjusted(8.0, 4.0, -8.0, -4.0),
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
-            self._snapshot.state.value.upper(),
+            self._snapshot.status_text.upper(),
         )
 
 
@@ -193,13 +205,20 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(config.min_width, config.min_height)
 
         self.canvas = VisualizerCanvas(config, self.visualizers, self)
-        self.file_label = QLabel("No file loaded")
+        self.source_label = QLabel("No file loaded")
         self.state_label = QLabel(TransportState.STOPPED.value)
-        self.position_label = QLabel("00:00 / 00:00")
+        self.detail_label = QLabel("00:00 / 00:00")
+        self.source_caption = QLabel("Source")
+        self.detail_caption = QLabel("Position")
         self.open_button = QPushButton("Open File")
         self.play_pause_button = QPushButton("Play")
         self.stop_button = QPushButton("Stop")
+        self.source_combo = QComboBox()
+        self.device_label = QLabel("Output")
+        self.device_combo = QComboBox()
+        self.refresh_devices_button = QPushButton("↺")
         self.mode_combo = QComboBox()
+        self.volume_caption = QLabel("Volume")
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.intensity_slider = QSlider(Qt.Orientation.Horizontal)
 
@@ -253,7 +272,7 @@ class MainWindow(QMainWindow):
         """Toggle playback from the current transport state."""
 
         snapshot = self.engine.get_snapshot()
-        if snapshot.metadata is None:
+        if snapshot.source_mode == AudioSourceMode.FILE and snapshot.metadata is None:
             self.open_file_dialog()
             return
 
@@ -291,17 +310,15 @@ class MainWindow(QMainWindow):
         info_layout.setContentsMargins(18, 14, 18, 14)
         info_layout.setSpacing(18)
 
-        file_caption = QLabel("Track")
-        file_caption.setObjectName("caption")
+        self.source_caption.setObjectName("caption")
         state_caption = QLabel("State")
         state_caption.setObjectName("caption")
-        position_caption = QLabel("Position")
-        position_caption.setObjectName("caption")
+        self.detail_caption.setObjectName("caption")
 
         file_stack = QVBoxLayout()
         file_stack.setSpacing(4)
-        file_stack.addWidget(file_caption)
-        file_stack.addWidget(self.file_label)
+        file_stack.addWidget(self.source_caption)
+        file_stack.addWidget(self.source_label)
 
         state_stack = QVBoxLayout()
         state_stack.setSpacing(4)
@@ -310,8 +327,8 @@ class MainWindow(QMainWindow):
 
         position_stack = QVBoxLayout()
         position_stack.setSpacing(4)
-        position_stack.addWidget(position_caption)
-        position_stack.addWidget(self.position_label)
+        position_stack.addWidget(self.detail_caption)
+        position_stack.addWidget(self.detail_label)
 
         info_layout.addLayout(file_stack, 1)
         info_layout.addLayout(state_stack)
@@ -323,8 +340,18 @@ class MainWindow(QMainWindow):
         controls_layout.setContentsMargins(18, 12, 18, 12)
         controls_layout.setSpacing(14)
 
+        source_label = QLabel("Source")
+        source_label.setObjectName("caption")
+        self.device_label.setObjectName("caption")
+        self.refresh_devices_button.setObjectName("iconButton")
+        self.refresh_devices_button.setToolTip("Refresh output devices")
+        self.refresh_devices_button.setMinimumWidth(36)
+        self.refresh_devices_button.setMaximumWidth(36)
         for visualizer in self.visualizers:
             self.mode_combo.addItem(visualizer.display_name, visualizer.mode_id)
+        for mode, display_name, enabled in self.engine.source_modes():
+            if enabled:
+                self.source_combo.addItem(display_name, mode)
 
         self.volume_slider.setRange(0, int(self.config.max_volume * 100))
         self.volume_slider.setValue(100)
@@ -336,19 +363,23 @@ class MainWindow(QMainWindow):
 
         mode_label = QLabel("Mode")
         mode_label.setObjectName("caption")
-        volume_label = QLabel("Volume")
-        volume_label.setObjectName("caption")
+        self.volume_caption.setObjectName("caption")
         intensity_label = QLabel("Intensity")
         intensity_label.setObjectName("caption")
 
+        controls_layout.addWidget(source_label)
+        controls_layout.addWidget(self.source_combo)
         controls_layout.addWidget(self.open_button)
         controls_layout.addWidget(self.play_pause_button)
         controls_layout.addWidget(self.stop_button)
+        controls_layout.addWidget(self.device_label)
+        controls_layout.addWidget(self.device_combo)
+        controls_layout.addWidget(self.refresh_devices_button)
         controls_layout.addSpacing(8)
         controls_layout.addWidget(mode_label)
         controls_layout.addWidget(self.mode_combo)
         controls_layout.addSpacing(8)
-        controls_layout.addWidget(volume_label)
+        controls_layout.addWidget(self.volume_caption)
         controls_layout.addWidget(self.volume_slider, 1)
         controls_layout.addSpacing(8)
         controls_layout.addWidget(intensity_label)
@@ -363,6 +394,9 @@ class MainWindow(QMainWindow):
         self.open_button.clicked.connect(self.open_file_dialog)
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.stop_button.clicked.connect(self.stop_playback)
+        self.source_combo.currentIndexChanged.connect(self._on_source_changed)
+        self.device_combo.currentIndexChanged.connect(self._on_device_changed)
+        self.refresh_devices_button.clicked.connect(self._refresh_output_devices)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
         self.intensity_slider.valueChanged.connect(self._on_intensity_changed)
@@ -401,6 +435,13 @@ class MainWindow(QMainWindow):
                 background-color: {theme.accent_primary};
                 border-color: {theme.accent_primary};
                 color: {theme.background_bottom};
+            }}
+            QPushButton#iconButton {{
+                min-width: 36px;
+                max-width: 36px;
+                padding: 8px 0;
+                font-size: 18px;
+                font-weight: 600;
             }}
             QComboBox {{
                 background-color: {theme.background_top};
@@ -441,13 +482,16 @@ class MainWindow(QMainWindow):
 
     def _load_file(self, path: str) -> None:
         try:
+            if self.engine.get_source_mode() != AudioSourceMode.FILE:
+                self.engine.set_source_mode(AudioSourceMode.FILE)
+                self._sync_source_combo()
             metadata = self.engine.load_file(path)
         except RuntimeError as exc:
             self._show_error("Open File Failed", str(exc))
             return
 
         self.statusBar().showMessage(f"Loaded {metadata.title}", 5000)
-        self.file_label.setToolTip(str(metadata.path))
+        self.source_label.setToolTip(str(metadata.path))
         self._refresh_from_engine()
 
     def _refresh_from_engine(self) -> None:
@@ -455,23 +499,77 @@ class MainWindow(QMainWindow):
         analysis = self.engine.get_analysis()
         self.canvas.set_frame(analysis, snapshot)
 
-        if snapshot.metadata is None:
-            self.file_label.setText("No file loaded")
+        if snapshot.source_mode == AudioSourceMode.FILE:
+            self.source_caption.setText("Track")
+            self.detail_caption.setText("Position")
+            if snapshot.metadata is None:
+                self.source_label.setText("No file loaded")
+                self.source_label.setToolTip("")
+            else:
+                self.source_label.setText(snapshot.metadata.title)
+                self.source_label.setToolTip(str(snapshot.metadata.path))
         else:
-            self.file_label.setText(snapshot.metadata.title)
+            self.source_caption.setText("Source")
+            self.detail_caption.setText("Device")
+            self.source_label.setText(snapshot.source_name)
+            self.source_label.setToolTip(snapshot.detail_text)
 
-        self.state_label.setText(snapshot.state.value)
-        self.position_label.setText(
-            f"{format_seconds(snapshot.position)} / {format_seconds(snapshot.duration)}"
-        )
-        self.play_pause_button.setText(
-            "Pause" if snapshot.state == TransportState.PLAYING else "Play"
-        )
-        self.stop_button.setEnabled(snapshot.metadata is not None)
+        self.state_label.setText(snapshot.status_text)
+        self.detail_label.setText(snapshot.detail_text)
+        self.play_pause_button.setText(snapshot.primary_action_label)
+        self.play_pause_button.setEnabled(snapshot.primary_action_enabled)
+        self.open_button.setEnabled(snapshot.open_file_enabled)
+        self.stop_button.setEnabled(snapshot.stop_enabled)
+        self.volume_slider.setEnabled(snapshot.volume_enabled)
+        self._sync_output_controls(snapshot.source_mode)
+        self._sync_source_combo()
+        if snapshot.source_mode == AudioSourceMode.SYSTEM:
+            self._sync_device_combo()
 
         if snapshot.error_message and snapshot.error_message != self._last_error_message:
             self.statusBar().showMessage(snapshot.error_message, 6000)
         self._last_error_message = snapshot.error_message
+
+    def _on_source_changed(self, index: int) -> None:
+        mode = self._coerce_source_mode(self.source_combo.itemData(index))
+        if mode is None:
+            return
+
+        try:
+            self.engine.set_source_mode(mode)
+        except RuntimeError as exc:
+            self._show_error("Source Switch Failed", str(exc))
+            self._sync_source_combo()
+            return
+
+        if mode == AudioSourceMode.SYSTEM:
+            try:
+                self._refresh_output_devices(show_message=False)
+                self.engine.play()
+            except RuntimeError as exc:
+                self._show_error("System Audio Capture Failed", str(exc))
+        self._refresh_from_engine()
+
+    def _on_device_changed(self, index: int) -> None:
+        if self.engine.get_source_mode() != AudioSourceMode.SYSTEM:
+            return
+
+        device_id = self.device_combo.itemData(index)
+        if not isinstance(device_id, str) or not device_id:
+            return
+
+        try:
+            self.engine.select_output_device(device_id)
+            snapshot = self.engine.get_snapshot()
+            if not snapshot.stream_active:
+                self.engine.play()
+        except RuntimeError as exc:
+            self._show_error("Device Switch Failed", str(exc))
+            self._refresh_output_devices(show_message=False)
+            return
+
+        self.statusBar().showMessage("System audio device updated", 2500)
+        self._refresh_from_engine()
 
     def _on_mode_changed(self, index: int) -> None:
         mode_id = self.mode_combo.itemData(index)
@@ -494,6 +592,65 @@ class MainWindow(QMainWindow):
     def _show_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)
         self.statusBar().showMessage(message, 7000)
+
+    def _refresh_output_devices(self, show_message: bool = True) -> None:
+        devices = self.engine.refresh_output_devices()
+        self._sync_device_combo()
+        if show_message:
+            if devices:
+                self.statusBar().showMessage("Output device list refreshed", 2500)
+            else:
+                availability = self.engine.system_audio_availability_error()
+                if availability:
+                    self.statusBar().showMessage(availability, 4000)
+
+    def _sync_source_combo(self) -> None:
+        mode = self.engine.get_source_mode()
+        blocker = QSignalBlocker(self.source_combo)
+        for index in range(self.source_combo.count()):
+            combo_mode = self._coerce_source_mode(self.source_combo.itemData(index))
+            if combo_mode == mode:
+                self.source_combo.setCurrentIndex(index)
+                break
+        del blocker
+
+    def _sync_device_combo(self) -> None:
+        devices = self.engine.list_output_devices()
+        selected_device_id = self.engine.selected_output_device_id()
+        blocker = QSignalBlocker(self.device_combo)
+        self.device_combo.clear()
+        selected_index = -1
+        for index, device in enumerate(devices):
+            label = f"{device.name} (Default)" if device.is_default else device.name
+            self.device_combo.addItem(label, device.identifier)
+            if device.identifier == selected_device_id:
+                selected_index = index
+        if selected_index >= 0:
+            self.device_combo.setCurrentIndex(selected_index)
+        del blocker
+
+    def _sync_output_controls(self, source_mode: AudioSourceMode) -> None:
+        is_system = source_mode == AudioSourceMode.SYSTEM
+        show_file_controls = not is_system
+        self.open_button.setVisible(show_file_controls)
+        self.play_pause_button.setVisible(show_file_controls)
+        self.stop_button.setVisible(show_file_controls)
+        self.volume_caption.setVisible(show_file_controls)
+        self.volume_slider.setVisible(show_file_controls)
+        self.device_label.setVisible(is_system)
+        self.device_combo.setVisible(is_system)
+        self.refresh_devices_button.setVisible(is_system)
+
+    @staticmethod
+    def _coerce_source_mode(value: object) -> AudioSourceMode | None:
+        if isinstance(value, AudioSourceMode):
+            return value
+        if isinstance(value, str):
+            try:
+                return AudioSourceMode(value)
+            except ValueError:
+                return None
+        return None
 
     @staticmethod
     def _extract_first_local_file(urls: list[QUrl]) -> str | None:
