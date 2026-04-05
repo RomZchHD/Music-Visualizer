@@ -8,6 +8,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QPainter, QPen, QRadialGradient
 
+from app.config import AppConfig
 from app.dsp import spectrum_to_bars
 from app.models import AnalysisFrame
 from app.visualizers.base import BaseVisualizer
@@ -19,16 +20,23 @@ class RadialVisualizer(BaseVisualizer):
     mode_id = "radial"
     display_name = "Radial Spectrum"
 
+    def __init__(self, config: AppConfig) -> None:
+        super().__init__(config)
+        self._display_bars: np.ndarray | None = None
+        self._motion_floor: np.ndarray | None = None
+
     def render(self, painter: QPainter, rect: QRectF, frame: AnalysisFrame) -> None:
-        bars = spectrum_to_bars(
+        raw_bars = spectrum_to_bars(
             frame.spectrum,
             sample_rate=frame.sample_rate,
             bar_count=self.config.radial_bar_count,
             min_frequency_hz=self.config.min_display_frequency_hz,
         )
-        if bars.size == 0:
+        if raw_bars.size == 0:
             return
-        bars = np.clip(bars * self.intensity, 0.0, 1.0)
+        target_bars = self._prepare_levels(raw_bars)
+        bars = self.animate_levels(self._display_bars, target_bars)
+        self._display_bars = bars
 
         theme = self.config.theme
         center = rect.center()
@@ -70,3 +78,25 @@ class RadialVisualizer(BaseVisualizer):
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)
             painter.drawLine(start, end)
+
+    def _prepare_levels(self, raw_bars: np.ndarray) -> np.ndarray:
+        ratio = self.intensity_ratio()
+        if self._motion_floor is None or self._motion_floor.shape != raw_bars.shape:
+            self._motion_floor = raw_bars.copy()
+        else:
+            baseline_mix = 0.968 - ratio * 0.05
+            self._motion_floor = (
+                self._motion_floor * baseline_mix + raw_bars * (1.0 - baseline_mix)
+            ).astype(np.float32)
+
+        motion = np.clip(
+            raw_bars - self._motion_floor * (0.89 - ratio * 0.18),
+            0.0,
+            1.0,
+        )
+        combined = np.clip(
+            raw_bars * 0.4 + motion * (0.98 + ratio * 0.58),
+            0.0,
+            1.0,
+        )
+        return self.shape_levels(combined)

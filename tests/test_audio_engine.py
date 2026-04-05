@@ -37,6 +37,14 @@ class FakeOutputStream:
         self.active = False
 
 
+class FakeTimeInfo:
+    """Small callback-time container used for latency compensation tests."""
+
+    def __init__(self, current_time: float, output_buffer_dac_time: float) -> None:
+        self.currentTime = current_time
+        self.outputBufferDacTime = output_buffer_dac_time
+
+
 def make_engine_config() -> AppConfig:
     """Return a compact config for tests."""
 
@@ -75,6 +83,16 @@ def test_play_after_end_recreates_stream(tmp_path: Path, monkeypatch: pytest.Mon
     assert engine._stream is not None
     assert engine._stream is not exhausted_stream
     assert engine._stream.active is True
+
+
+def test_estimate_output_latency_seconds_uses_callback_timing() -> None:
+    engine = AudioEngine(make_engine_config())
+
+    latency = engine._estimate_output_latency_seconds(
+        FakeTimeInfo(current_time=1.0, output_buffer_dac_time=1.02)
+    )
+
+    assert latency == pytest.approx(0.02, rel=1e-4)
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is required for codec fallback tests")

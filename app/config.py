@@ -38,19 +38,19 @@ class AppConfig:
     fft_size: int = 2048
     waveform_points: int = 640
     waveform_window_frames: int = 512
-    bar_count: int = 64
-    radial_bar_count: int = 96
-    default_visualizer_intensity: float = 0.65
-    min_visualizer_intensity: float = 0.25
+    bar_count: int = 32
+    radial_bar_count: int = 48
+    default_visualizer_intensity: float = 0.8
+    min_visualizer_intensity: float = 0.01
     max_visualizer_intensity: float = 1.2
-    spectrum_smoothing: float = 0.72
+    spectrum_smoothing: float = 0.58
     band_smoothing: float = 0.82
     reference_smoothing: float = 0.92
     adaptive_floor_db: float = -36.0
     dynamic_range_db: float = 72.0
     bass_cutoff_hz: float = 250.0
     treble_cutoff_hz: float = 4000.0
-    min_display_frequency_hz: float = 30.0
+    min_display_frequency_hz: float = 45.0
     max_volume: float = 1.5
     theme: ThemeConfig = field(default_factory=ThemeConfig)
 

@@ -63,6 +63,18 @@ def test_spectrum_to_bars_matches_requested_count() -> None:
     assert np.all(bars <= 1.0)
 
 
+def test_spectrum_to_bars_preserves_high_frequency_activity() -> None:
+    sample_rate = 48_000
+    spectrum = np.zeros(1025, dtype=np.float32)
+    frequencies = np.linspace(0.0, sample_rate / 2.0, num=spectrum.size, dtype=np.float32)
+    high_index = int(np.argmin(np.abs(frequencies - 8_000.0)))
+    spectrum[high_index] = 1.0
+
+    bars = spectrum_to_bars(spectrum, sample_rate=sample_rate, bar_count=32)
+
+    assert float(bars.max()) > 0.3
+
+
 def test_analyzer_waveform_prefers_recent_window() -> None:
     config = AppConfig(
         fft_size=128,
@@ -81,3 +93,18 @@ def test_analyzer_waveform_prefers_recent_window() -> None:
 
     assert frame.waveform.shape == (32,)
     assert float(np.max(np.abs(frame.waveform))) < 0.01
+
+
+def test_analyzer_can_use_dedicated_waveform_samples() -> None:
+    config = AppConfig(
+        fft_size=128,
+        waveform_points=16,
+        waveform_window_frames=16,
+    )
+    analyzer = AudioAnalyzer(sample_rate=48_000, config=config)
+    spectrum_signal = np.zeros(128, dtype=np.float32)
+    waveform_signal = np.linspace(-1.0, 1.0, 16, dtype=np.float32)
+
+    frame = analyzer.analyze(spectrum_signal, waveform_samples=waveform_signal)
+
+    np.testing.assert_allclose(frame.waveform, waveform_signal, atol=1e-5)

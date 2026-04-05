@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+import numpy as np
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QPainter
 
@@ -34,6 +35,48 @@ class BaseVisualizer(ABC):
             self.config.min_visualizer_intensity,
             self.config.max_visualizer_intensity,
         )
+
+    def intensity_ratio(self) -> float:
+        """Return intensity normalized to a 0..1 range."""
+
+        span = self.config.max_visualizer_intensity - self.config.min_visualizer_intensity
+        if span <= 0.0:
+            return 0.5
+        return clamp(
+            (self.intensity - self.config.min_visualizer_intensity) / span,
+            0.0,
+            1.0,
+        )
+
+    def shape_levels(self, values: np.ndarray) -> np.ndarray:
+        """Shape normalized levels without adding an artificial floor."""
+
+        ratio = self.intensity_ratio()
+        exponent = 1.18 - ratio * 0.46
+        clipped = np.clip(values, 0.0, 1.0)
+        return np.power(clipped, exponent).astype(np.float32)
+
+    def animate_levels(
+        self,
+        previous: np.ndarray | None,
+        target: np.ndarray,
+    ) -> np.ndarray:
+        """Animate levels with fast attack and slower release."""
+
+        target_array = np.asarray(target, dtype=np.float32)
+        if previous is None or previous.shape != target_array.shape:
+            return target_array.copy()
+
+        ratio = self.intensity_ratio()
+        attack = 0.24 - ratio * 0.12
+        release = 0.84 - ratio * 0.2
+        rising = target_array >= previous
+        animated = np.where(
+            rising,
+            previous * attack + target_array * (1.0 - attack),
+            previous * release + target_array * (1.0 - release),
+        )
+        return animated.astype(np.float32)
 
     def with_alpha(self, color: str | QColor, alpha: int) -> QColor:
         """Return a color with the requested alpha channel."""

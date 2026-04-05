@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections import deque
 import io
 import shutil
 import subprocess
 import threading
+from time import perf_counter
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +45,7 @@ class AudioEngine:
         self._current_frame = 0
         self._volume = 1.0
         self._error_message: str | None = None
+        self._scheduled_analysis: deque[tuple[float, AnalysisFrame]] = deque()
         self._analysis_window_frames = max(
             self.config.fft_size,
             self.config.waveform_window_frames,
@@ -81,6 +84,7 @@ class AudioEngine:
             self._current_frame = 0
             self._state = TransportState.STOPPED
             self._error_message = None
+            self._scheduled_analysis.clear()
             self._prime_analysis_locked()
 
         return metadata
@@ -129,6 +133,7 @@ class AudioEngine:
         with self._lock:
             self._state = TransportState.STOPPED
             self._current_frame = 0
+            self._scheduled_analysis.clear()
             if self._data is not None and self._analyzer is not None:
                 self._prime_analysis_locked()
             else:
@@ -180,6 +185,9 @@ class AudioEngine:
         """Return the latest analysis frame."""
 
         with self._lock:
+            now = perf_counter()
+            while self._scheduled_analysis and self._scheduled_analysis[0][0] <= now:
+                _, self._analysis = self._scheduled_analysis.popleft()
             return self._analysis
 
     def close(self) -> None:
@@ -282,11 +290,11 @@ class AudioEngine:
         time_info: object,
         status: sd.CallbackFlags,
     ) -> None:
-        del time_info
-
         analysis_input: np.ndarray | None = None
+        waveform_input: np.ndarray | None = None
         analyzer: AudioAnalyzer | None = None
         timestamp = 0.0
+        display_at = 0.0
         reached_end = False
 
         with self._lock:
@@ -305,22 +313,43 @@ class AudioEngine:
             if chunk.size:
                 outdata[: chunk.shape[0], : chunk.shape[1]] = chunk * self._volume
                 self._current_frame = end
-                window_start = max(0, end - self._analysis_window_frames)
-                analysis_input = self._data[window_start:end].copy()
+                chunk_frames = chunk.shape[0]
+                analysis_center = min(
+                    self._metadata.frames,
+                    start + max(1, chunk_frames // 2),
+                )
+                window_start = max(0, analysis_center - self._analysis_window_frames)
+                analysis_input = self._data[window_start:analysis_center].copy()
+                waveform_input = chunk.copy()
                 analyzer = self._analyzer
-                timestamp = end / float(self._metadata.sample_rate)
+                timestamp = analysis_center / float(self._metadata.sample_rate)
+                latency_seconds = self._estimate_output_latency_seconds(time_info)
+                display_at = perf_counter() + latency_seconds
 
             reached_end = end >= self._metadata.frames
             if reached_end:
                 self._state = TransportState.STOPPED
 
-        if analysis_input is not None and analyzer is not None:
-            analysis = analyzer.analyze(analysis_input, timestamp=timestamp)
+        if analysis_input is not None and waveform_input is not None and analyzer is not None:
+            analysis = analyzer.analyze(
+                analysis_input,
+                timestamp=timestamp,
+                waveform_samples=waveform_input,
+            )
             with self._lock:
-                self._analysis = analysis
+                self._scheduled_analysis.append((display_at, analysis))
+                while len(self._scheduled_analysis) > 24:
+                    self._scheduled_analysis.popleft()
 
         if reached_end:
             raise sd.CallbackStop()
+
+    def _estimate_output_latency_seconds(self, time_info: object) -> float:
+        """Estimate seconds until the queued output buffer reaches the DAC."""
+
+        output_time = float(getattr(time_info, "outputBufferDacTime", 0.0) or 0.0)
+        current_time = float(getattr(time_info, "currentTime", 0.0) or 0.0)
+        return max(0.0, output_time - current_time)
 
     def _stop_stream_if_needed(self) -> None:
         with self._lock:

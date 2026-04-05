@@ -99,7 +99,7 @@ def spectrum_to_bars(
     spectrum: FloatArray,
     sample_rate: int,
     bar_count: int,
-    min_frequency_hz: float = 30.0,
+    min_frequency_hz: float = 45.0,
 ) -> FloatArray:
     """Convert a spectrum into log-spaced bar magnitudes."""
 
@@ -129,9 +129,19 @@ def spectrum_to_bars(
         region = array[left:right]
         if region.size == 0:
             continue
-        bars[index] = float(region.max() * 0.85 + region.mean(dtype=np.float32) * 0.15)
+        region_peak = float(region.max())
+        region_energy = float(np.sqrt(np.mean(np.square(region), dtype=np.float32)))
+        bars[index] = region_peak * 0.82 + region_energy * 0.18
 
-    return np.power(np.clip(bars, 0.0, 1.0), 0.85).astype(np.float32)
+    positions = np.linspace(0.0, 1.0, num=bar_count, dtype=np.float32)
+    equalization = np.interp(
+        positions,
+        np.array([0.0, 0.18, 0.55, 1.0], dtype=np.float32),
+        np.array([1.2, 1.1, 1.0, 1.14], dtype=np.float32),
+    )
+    bars *= equalization
+
+    return np.power(np.clip(bars, 0.0, 1.0), 0.78).astype(np.float32)
 
 
 @dataclass
@@ -151,13 +161,19 @@ class AudioAnalyzer:
         self._previous_bands = BandEnergy(bass=0.0, mids=0.0, treble=0.0)
         self._reference_db: float | None = None
 
-    def analyze(self, samples: FloatArray, timestamp: float = 0.0) -> AnalysisFrame:
+    def analyze(
+        self,
+        samples: FloatArray,
+        timestamp: float = 0.0,
+        waveform_samples: FloatArray | None = None,
+    ) -> AnalysisFrame:
         """Analyze a recent block of audio and return display-ready values."""
 
         mono = to_mono(samples)
-        waveform_source = mono[-self.config.waveform_window_frames :]
+        waveform_mono = to_mono(waveform_samples) if waveform_samples is not None else mono
+        waveform_source = waveform_mono[-self.config.waveform_window_frames :]
         if waveform_source.size == 0:
-            waveform_source = mono
+            waveform_source = waveform_mono
 
         waveform = resample_for_display(waveform_source, self.config.waveform_points)
         peak = float(np.max(np.abs(waveform_source))) if waveform_source.size else 0.0

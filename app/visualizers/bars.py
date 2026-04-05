@@ -6,6 +6,7 @@ import numpy as np
 from PySide6.QtCore import QLineF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPen
 
+from app.config import AppConfig
 from app.dsp import spectrum_to_bars
 from app.models import AnalysisFrame
 from app.visualizers.base import BaseVisualizer
@@ -17,16 +18,23 @@ class BarsVisualizer(BaseVisualizer):
     mode_id = "bars"
     display_name = "Spectrum Bars"
 
+    def __init__(self, config: AppConfig) -> None:
+        super().__init__(config)
+        self._display_bars: np.ndarray | None = None
+        self._motion_floor: np.ndarray | None = None
+
     def render(self, painter: QPainter, rect: QRectF, frame: AnalysisFrame) -> None:
-        bars = spectrum_to_bars(
+        raw_bars = spectrum_to_bars(
             frame.spectrum,
             sample_rate=frame.sample_rate,
             bar_count=self.config.bar_count,
             min_frequency_hz=self.config.min_display_frequency_hz,
         )
-        if bars.size == 0:
+        if raw_bars.size == 0:
             return
-        bars = np.clip(bars * self.intensity, 0.0, 1.0)
+        target_bars = self._prepare_levels(raw_bars)
+        bars = self.animate_levels(self._display_bars, target_bars)
+        self._display_bars = bars
 
         theme = self.config.theme
         padding_x = rect.width() * 0.06
@@ -37,7 +45,7 @@ class BarsVisualizer(BaseVisualizer):
         bar_width = max(4.0, (inner_width - gap * (bars.size - 1)) / bars.size)
         max_height = bottom - top
 
-        glow_height = rect.height() * 0.18 * max(frame.bands.bass * self.intensity, 0.06)
+        glow_height = rect.height() * 0.18 * max(frame.bands.bass * (0.9 + self.intensity_ratio() * 0.4), 0.06)
         painter.fillRect(
             QRectF(rect.left(), bottom - glow_height, rect.width(), glow_height),
             self.with_alpha(theme.accent_bass, 40),
@@ -79,3 +87,25 @@ class BarsVisualizer(BaseVisualizer):
             cap_y = max(top, y - 8.0)
             painter.setBrush(self.with_alpha(QColor(theme.text_primary), 140))
             painter.drawRoundedRect(QRectF(x, cap_y, bar_width, 3.0), 1.5, 1.5)
+
+    def _prepare_levels(self, raw_bars: np.ndarray) -> np.ndarray:
+        ratio = self.intensity_ratio()
+        if self._motion_floor is None or self._motion_floor.shape != raw_bars.shape:
+            self._motion_floor = raw_bars.copy()
+        else:
+            baseline_mix = 0.965 - ratio * 0.05
+            self._motion_floor = (
+                self._motion_floor * baseline_mix + raw_bars * (1.0 - baseline_mix)
+            ).astype(np.float32)
+
+        motion = np.clip(
+            raw_bars - self._motion_floor * (0.88 - ratio * 0.18),
+            0.0,
+            1.0,
+        )
+        combined = np.clip(
+            raw_bars * 0.42 + motion * (0.95 + ratio * 0.55),
+            0.0,
+            1.0,
+        )
+        return self.shape_levels(combined)
