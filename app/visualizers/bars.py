@@ -21,7 +21,8 @@ class BarsVisualizer(BaseVisualizer):
     def __init__(self, config: AppConfig) -> None:
         super().__init__(config)
         self._display_bars: np.ndarray | None = None
-        self._motion_floor: np.ndarray | None = None
+        self._energy_floor: np.ndarray | None = None
+        self._energy_peak: np.ndarray | None = None
 
     def render(self, painter: QPainter, rect: QRectF, frame: AnalysisFrame) -> None:
         raw_bars = spectrum_to_bars(
@@ -59,7 +60,8 @@ class BarsVisualizer(BaseVisualizer):
 
         for index, value in enumerate(bars):
             amount = float(value)
-            height = max(2.0, max_height * amount)
+            display_amount = min(1.0, pow(amount, 1.05) * 0.84)
+            height = max(2.0, max_height * display_amount)
             x = rect.left() + padding_x + index * (bar_width + gap)
             y = bottom - height
 
@@ -89,23 +91,42 @@ class BarsVisualizer(BaseVisualizer):
             painter.drawRoundedRect(QRectF(x, cap_y, bar_width, 3.0), 1.5, 1.5)
 
     def _prepare_levels(self, raw_bars: np.ndarray) -> np.ndarray:
+        values = np.clip(np.asarray(raw_bars, dtype=np.float32), 0.0, 1.0)
         ratio = self.intensity_ratio()
-        if self._motion_floor is None or self._motion_floor.shape != raw_bars.shape:
-            self._motion_floor = raw_bars.copy()
+
+        if self._energy_floor is None or self._energy_floor.shape != values.shape:
+            self._energy_floor = values * 0.9
         else:
-            baseline_mix = 0.965 - ratio * 0.05
-            self._motion_floor = (
-                self._motion_floor * baseline_mix + raw_bars * (1.0 - baseline_mix)
+            falling = values < self._energy_floor
+            floor_drop = 0.56 - ratio * 0.06
+            floor_rise = 0.996 - ratio * 0.012
+            self._energy_floor = np.where(
+                falling,
+                self._energy_floor * floor_drop + values * (1.0 - floor_drop),
+                self._energy_floor * floor_rise + values * (1.0 - floor_rise),
             ).astype(np.float32)
 
-        motion = np.clip(
-            raw_bars - self._motion_floor * (0.88 - ratio * 0.18),
-            0.0,
-            1.0,
-        )
-        combined = np.clip(
-            raw_bars * 0.42 + motion * (0.95 + ratio * 0.55),
-            0.0,
-            1.0,
-        )
+        if self._energy_peak is None or self._energy_peak.shape != values.shape:
+            self._energy_peak = np.maximum(values, self._energy_floor + 0.18).astype(np.float32)
+        else:
+            rising = values > self._energy_peak
+            peak_attack = 0.42 - ratio * 0.12
+            peak_release = 0.95 - ratio * 0.08
+            self._energy_peak = np.where(
+                rising,
+                self._energy_peak * peak_attack + values * (1.0 - peak_attack),
+                self._energy_peak * peak_release + values * (1.0 - peak_release),
+            ).astype(np.float32)
+            self._energy_peak = np.maximum(
+                self._energy_peak,
+                self._energy_floor + 0.12,
+            ).astype(np.float32)
+
+        span = np.maximum(self._energy_peak - self._energy_floor, 0.12)
+        motion = np.clip((values - self._energy_floor) / span, 0.0, 1.0)
+        motion = np.power(motion, 1.08 - ratio * 0.18)
+
+        body = np.power(values, 1.08)
+        combined = np.clip(body * 0.34 + motion * 0.78, 0.0, 1.0)
+        combined = combined / (0.88 + combined * 0.12)
         return self.shape_levels(combined)

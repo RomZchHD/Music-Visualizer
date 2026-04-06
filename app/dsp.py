@@ -130,18 +130,25 @@ def spectrum_to_bars(
         if region.size == 0:
             continue
         region_peak = float(region.max())
+        region_presence = float(np.percentile(region, 82.0))
         region_energy = float(np.sqrt(np.mean(np.square(region), dtype=np.float32)))
-        bars[index] = region_peak * 0.82 + region_energy * 0.18
+        region_mean = float(np.mean(region, dtype=np.float32))
+        bars[index] = (
+            region_peak * 0.52
+            + region_presence * 0.18
+            + region_energy * 0.2
+            + region_mean * 0.1
+        )
 
     positions = np.linspace(0.0, 1.0, num=bar_count, dtype=np.float32)
     equalization = np.interp(
         positions,
         np.array([0.0, 0.18, 0.55, 1.0], dtype=np.float32),
-        np.array([1.2, 1.1, 1.0, 1.14], dtype=np.float32),
+        np.array([0.92, 0.98, 1.02, 1.1], dtype=np.float32),
     )
     bars *= equalization
 
-    return np.power(np.clip(bars, 0.0, 1.0), 0.78).astype(np.float32)
+    return np.power(np.clip(bars, 0.0, 1.0), 0.86).astype(np.float32)
 
 
 @dataclass

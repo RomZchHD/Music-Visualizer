@@ -51,10 +51,8 @@ class BaseVisualizer(ABC):
     def shape_levels(self, values: np.ndarray) -> np.ndarray:
         """Shape normalized levels without adding an artificial floor."""
 
-        ratio = self.intensity_ratio()
-        exponent = 1.18 - ratio * 0.46
         clipped = np.clip(values, 0.0, 1.0)
-        return np.power(clipped, exponent).astype(np.float32)
+        return np.power(clipped, 0.9).astype(np.float32)
 
     def animate_levels(
         self,
@@ -68,8 +66,8 @@ class BaseVisualizer(ABC):
             return target_array.copy()
 
         ratio = self.intensity_ratio()
-        attack = 0.24 - ratio * 0.12
-        release = 0.84 - ratio * 0.2
+        attack = 0.3 - ratio * 0.16
+        release = 0.9 - ratio * 0.22
         rising = target_array >= previous
         animated = np.where(
             rising,
@@ -77,6 +75,49 @@ class BaseVisualizer(ABC):
             previous * release + target_array * (1.0 - release),
         )
         return animated.astype(np.float32)
+
+    def normalize_spectrum_motion(
+        self,
+        raw_values: np.ndarray,
+        floor_state: np.ndarray | None,
+        peak_state: np.ndarray | None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Normalize spectrum levels against adaptive floor and ceiling envelopes."""
+
+        values = np.clip(np.asarray(raw_values, dtype=np.float32), 0.0, 1.0)
+        ratio = self.intensity_ratio()
+
+        if floor_state is None or floor_state.shape != values.shape:
+            floor_state = values.copy()
+        else:
+            falling = values < floor_state
+            floor_drop = 0.68 - ratio * 0.08
+            floor_rise = 0.992 - ratio * 0.02
+            floor_state = np.where(
+                falling,
+                floor_state * floor_drop + values * (1.0 - floor_drop),
+                floor_state * floor_rise + values * (1.0 - floor_rise),
+            ).astype(np.float32)
+
+        if peak_state is None or peak_state.shape != values.shape:
+            peak_state = np.maximum(values, floor_state + 0.16).astype(np.float32)
+        else:
+            rising = values > peak_state
+            peak_attack = 0.54 - ratio * 0.12
+            peak_release = 0.988 - ratio * 0.02
+            peak_state = np.where(
+                rising,
+                peak_state * peak_attack + values * (1.0 - peak_attack),
+                peak_state * peak_release + values * (1.0 - peak_release),
+            ).astype(np.float32)
+            peak_state = np.maximum(peak_state, floor_state + 0.1).astype(np.float32)
+
+        dynamic_span = np.maximum(peak_state - floor_state, 0.08)
+        motion = np.clip((values - floor_state) / dynamic_span, 0.0, 1.0)
+        motion = np.power(motion, 1.04 - ratio * 0.16)
+        body = np.power(values, 0.96)
+        combined = np.clip(body * 0.48 + motion * 0.72, 0.0, 1.0)
+        return self.shape_levels(combined), floor_state, peak_state
 
     def with_alpha(self, color: str | QColor, alpha: int) -> QColor:
         """Return a color with the requested alpha channel."""

@@ -23,7 +23,8 @@ class RadialVisualizer(BaseVisualizer):
     def __init__(self, config: AppConfig) -> None:
         super().__init__(config)
         self._display_bars: np.ndarray | None = None
-        self._motion_floor: np.ndarray | None = None
+        self._energy_floor: np.ndarray | None = None
+        self._energy_peak: np.ndarray | None = None
 
     def render(self, painter: QPainter, rect: QRectF, frame: AnalysisFrame) -> None:
         raw_bars = spectrum_to_bars(
@@ -80,23 +81,9 @@ class RadialVisualizer(BaseVisualizer):
             painter.drawLine(start, end)
 
     def _prepare_levels(self, raw_bars: np.ndarray) -> np.ndarray:
-        ratio = self.intensity_ratio()
-        if self._motion_floor is None or self._motion_floor.shape != raw_bars.shape:
-            self._motion_floor = raw_bars.copy()
-        else:
-            baseline_mix = 0.968 - ratio * 0.05
-            self._motion_floor = (
-                self._motion_floor * baseline_mix + raw_bars * (1.0 - baseline_mix)
-            ).astype(np.float32)
-
-        motion = np.clip(
-            raw_bars - self._motion_floor * (0.89 - ratio * 0.18),
-            0.0,
-            1.0,
+        levels, self._energy_floor, self._energy_peak = self.normalize_spectrum_motion(
+            raw_bars,
+            self._energy_floor,
+            self._energy_peak,
         )
-        combined = np.clip(
-            raw_bars * 0.4 + motion * (0.98 + ratio * 0.58),
-            0.0,
-            1.0,
-        )
-        return self.shape_levels(combined)
+        return levels

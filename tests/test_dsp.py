@@ -75,6 +75,19 @@ def test_spectrum_to_bars_preserves_high_frequency_activity() -> None:
     assert float(bars.max()) > 0.3
 
 
+def test_spectrum_to_bars_does_not_flatten_broad_bass_plateau() -> None:
+    sample_rate = 48_000
+    spectrum = np.zeros(1025, dtype=np.float32)
+    frequencies = np.linspace(0.0, sample_rate / 2.0, num=spectrum.size, dtype=np.float32)
+    spectrum[(frequencies >= 50.0) & (frequencies < 160.0)] = 0.95
+    spectrum[(frequencies >= 160.0) & (frequencies < 260.0)] = 0.55
+
+    bars = spectrum_to_bars(spectrum, sample_rate=sample_rate, bar_count=32)
+
+    assert float(np.ptp(bars[:6])) > 0.03
+    assert float(np.max(bars[:4])) < 0.98
+
+
 def test_analyzer_waveform_prefers_recent_window() -> None:
     config = AppConfig(
         fft_size=128,
