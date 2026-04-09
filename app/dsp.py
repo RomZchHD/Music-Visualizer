@@ -144,11 +144,22 @@ def spectrum_to_bars(
     equalization = np.interp(
         positions,
         np.array([0.0, 0.18, 0.55, 1.0], dtype=np.float32),
-        np.array([0.92, 0.98, 1.02, 1.1], dtype=np.float32),
+        np.array([0.88, 0.96, 1.01, 1.08], dtype=np.float32),
     )
     bars *= equalization
 
-    return np.power(np.clip(bars, 0.0, 1.0), 0.86).astype(np.float32)
+    if bar_count > 1:
+        neighbor_blend = bars.copy()
+        neighbor_blend[0] = bars[0] * 0.72 + bars[1] * 0.28
+        neighbor_blend[-1] = bars[-1] * 0.72 + bars[-2] * 0.28
+        if bar_count > 2:
+            neighbor_blend[1:-1] = (
+                bars[1:-1] * 0.72
+                + (bars[:-2] + bars[2:]) * 0.14
+            )
+        bars = np.maximum(bars * 0.9, neighbor_blend)
+
+    return np.power(np.clip(bars, 0.0, 1.0), 0.9).astype(np.float32)
 
 
 @dataclass

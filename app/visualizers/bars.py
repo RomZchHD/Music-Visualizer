@@ -94,12 +94,23 @@ class BarsVisualizer(BaseVisualizer):
         values = np.clip(np.asarray(raw_bars, dtype=np.float32), 0.0, 1.0)
         ratio = self.intensity_ratio()
 
+        if values.size > 1:
+            neighbor_support = values.copy()
+            neighbor_support[0] = max(values[0], values[1] * 0.42)
+            neighbor_support[-1] = max(values[-1], values[-2] * 0.42)
+            if values.size > 2:
+                neighbor_support[1:-1] = np.maximum(
+                    values[1:-1],
+                    (values[:-2] + values[2:]) * 0.42,
+                )
+            values = (values * 0.84 + neighbor_support * 0.16).astype(np.float32)
+
         if self._energy_floor is None or self._energy_floor.shape != values.shape:
-            self._energy_floor = values * 0.9
+            self._energy_floor = values * 0.52
         else:
             falling = values < self._energy_floor
-            floor_drop = 0.56 - ratio * 0.06
-            floor_rise = 0.996 - ratio * 0.012
+            floor_drop = 0.34 - ratio * 0.08
+            floor_rise = 0.982 - ratio * 0.03
             self._energy_floor = np.where(
                 falling,
                 self._energy_floor * floor_drop + values * (1.0 - floor_drop),
@@ -107,11 +118,11 @@ class BarsVisualizer(BaseVisualizer):
             ).astype(np.float32)
 
         if self._energy_peak is None or self._energy_peak.shape != values.shape:
-            self._energy_peak = np.maximum(values, self._energy_floor + 0.18).astype(np.float32)
+            self._energy_peak = np.maximum(values, self._energy_floor + 0.22).astype(np.float32)
         else:
             rising = values > self._energy_peak
-            peak_attack = 0.42 - ratio * 0.12
-            peak_release = 0.95 - ratio * 0.08
+            peak_attack = 0.34 - ratio * 0.16
+            peak_release = 0.86 - ratio * 0.16
             self._energy_peak = np.where(
                 rising,
                 self._energy_peak * peak_attack + values * (1.0 - peak_attack),
@@ -119,14 +130,27 @@ class BarsVisualizer(BaseVisualizer):
             ).astype(np.float32)
             self._energy_peak = np.maximum(
                 self._energy_peak,
-                self._energy_floor + 0.12,
+                self._energy_floor + 0.16,
             ).astype(np.float32)
 
-        span = np.maximum(self._energy_peak - self._energy_floor, 0.12)
+        span = np.maximum(self._energy_peak - self._energy_floor, 0.16)
         motion = np.clip((values - self._energy_floor) / span, 0.0, 1.0)
-        motion = np.power(motion, 1.08 - ratio * 0.18)
+        motion = np.power(motion, 0.96 - ratio * 0.22)
 
-        body = np.power(values, 1.08)
-        combined = np.clip(body * 0.34 + motion * 0.78, 0.0, 1.0)
-        combined = combined / (0.88 + combined * 0.12)
+        local_lift_floor = np.minimum(self._energy_floor, values * (0.7 - ratio * 0.08))
+        local_lift = np.clip(values - local_lift_floor, 0.0, 1.0)
+        local_lift = np.power(local_lift, 0.78)
+
+        body = np.power(values, 1.14 - ratio * 0.22)
+        combined = np.clip(
+            body * (0.22 + (1.0 - ratio) * 0.02)
+            + motion * (0.62 + ratio * 0.12)
+            + local_lift * (0.3 + ratio * 0.04),
+            0.0,
+            1.0,
+        )
+        combined = combined / (0.93 + combined * 0.07)
+        contrast = 0.9 + ratio * 0.22
+        combined = np.clip((combined - 0.5) * contrast + 0.5, 0.0, 1.0)
+        combined = np.clip(combined * 0.9, 0.0, 1.0)
         return self.shape_levels(combined)

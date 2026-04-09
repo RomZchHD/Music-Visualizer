@@ -52,7 +52,8 @@ class BaseVisualizer(ABC):
         """Shape normalized levels without adding an artificial floor."""
 
         clipped = np.clip(values, 0.0, 1.0)
-        return np.power(clipped, 0.9).astype(np.float32)
+        exponent = 1.0 - self.intensity_ratio() * 0.08
+        return np.power(clipped, exponent).astype(np.float32)
 
     def animate_levels(
         self,
@@ -66,8 +67,8 @@ class BaseVisualizer(ABC):
             return target_array.copy()
 
         ratio = self.intensity_ratio()
-        attack = 0.3 - ratio * 0.16
-        release = 0.9 - ratio * 0.22
+        attack = 0.4 - ratio * 0.24
+        release = 0.92 - ratio * 0.32
         rising = target_array >= previous
         animated = np.where(
             rising,
