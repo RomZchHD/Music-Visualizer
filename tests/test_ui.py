@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QUrl
 
 import app.ui as ui_module
 from app.config import AppConfig
@@ -142,24 +142,18 @@ def test_main_window_toggles_controls_between_file_and_system_modes(
     window = MainWindow()
     window.show()
 
-    assert window.open_button.isEnabled() is True
-    assert window.volume_slider.isEnabled() is True
-    assert window.open_button.isHidden() is False
-    assert window.play_pause_button.isHidden() is False
-    assert window.stop_button.isHidden() is False
-    assert window.volume_slider.isHidden() is False
-    assert window.device_combo.isHidden() is True
-
-    window.source_combo.setCurrentIndex(1)
-    window._refresh_from_engine()
-
+    assert window.source_label.isVisible() is False
+    assert window.state_label.isVisible() is False
+    assert window.detail_label.isVisible() is False
     assert window.open_button.isEnabled() is False
     assert window.volume_slider.isEnabled() is False
     assert window.open_button.isHidden() is True
     assert window.play_pause_button.isHidden() is True
     assert window.stop_button.isHidden() is True
     assert window.volume_slider.isHidden() is True
-    assert window.device_combo.isHidden() is False
+    assert window.device_combo.isVisible() is False
+    assert window.refresh_devices_button.isVisible() is False
+    assert window.visualizer_only_button.text() == "▼"
     assert window.engine.play_calls == 1
 
     window.source_combo.setCurrentIndex(0)
@@ -171,6 +165,75 @@ def test_main_window_toggles_controls_between_file_and_system_modes(
     assert window.play_pause_button.isHidden() is False
     assert window.stop_button.isHidden() is False
     assert window.volume_slider.isHidden() is False
-    assert window.device_combo.isHidden() is True
+    assert window.device_combo.isVisible() is False
+
+    window.source_combo.setCurrentIndex(1)
+    window._refresh_from_engine()
+
+    assert window.open_button.isEnabled() is False
+    assert window.volume_slider.isEnabled() is False
+    assert window.open_button.isHidden() is True
+    assert window.play_pause_button.isHidden() is True
+    assert window.stop_button.isHidden() is True
+    assert window.volume_slider.isHidden() is True
+    assert window.device_combo.isVisible() is False
+    assert window.engine.play_calls == 2
+
+    window.close()
+
+
+def test_main_window_visualizer_only_mode_moves_controls_offscreen(
+    qt_app,
+    monkeypatch,
+) -> None:
+    del qt_app
+    monkeypatch.setattr(ui_module, "AudioEngine", FakeEngine)
+
+    window = MainWindow()
+    window.resize(1200, 800)
+    window.show()
+
+    visible_y = window.controls_panel.y()
+    assert window.visualizer_only_button.isChecked() is False
+    assert window.intensity_slider.maximumWidth() == 320
+
+    window._set_visualizer_only_mode(True, animate=False)
+
+    assert window.visualizer_only_button.isChecked() is True
+    assert window.controls_panel.y() >= window.centralWidget().height()
+
+    window._set_visualizer_only_mode(False, animate=False)
+
+    assert window.visualizer_only_button.isChecked() is False
+    assert window.controls_panel.y() == visible_y
+
+    window.close()
+
+
+def test_main_window_supports_topmost_and_borderless_toggles(
+    qt_app,
+    monkeypatch,
+) -> None:
+    del qt_app
+    monkeypatch.setattr(ui_module, "AudioEngine", FakeEngine)
+
+    window = MainWindow()
+    window.show()
+
+    assert window.minimumWidth() == 900
+    assert window.minimumHeight() == 560
+    assert bool(window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) is False
+    assert bool(window.windowFlags() & Qt.WindowType.FramelessWindowHint) is False
+
+    window.toggle_always_on_top()
+    assert bool(window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) is True
+
+    window.toggle_borderless_mode()
+    assert bool(window.windowFlags() & Qt.WindowType.FramelessWindowHint) is True
+
+    window.toggle_always_on_top()
+    window.toggle_borderless_mode()
+    assert bool(window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) is False
+    assert bool(window.windowFlags() & Qt.WindowType.FramelessWindowHint) is False
 
     window.close()

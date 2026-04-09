@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt, QTimer, QUrl, QSignalBlocker
+from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QPoint, QPropertyAnimation, QRectF, Qt, QTimer, QUrl, QSignalBlocker
 from PySide6.QtGui import (
     QColor,
     QCloseEvent,
@@ -68,7 +68,7 @@ class VisualizerCanvas(QWidget):
             stream_active=False,
             error_message=None,
         )
-        self.setMinimumHeight(420)
+        self.setMinimumHeight(300)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self.set_visualizer_intensity(self._intensity)
 
@@ -144,7 +144,6 @@ class VisualizerCanvas(QWidget):
             return
 
         self._visualizers[self._mode_id].render(painter, content_rect, self._analysis)
-        self._draw_overlay(painter, content_rect)
 
     def _draw_empty_state(self, painter: QPainter, rect: QRectF) -> None:
         theme = self.config.theme
@@ -170,27 +169,6 @@ class VisualizerCanvas(QWidget):
             subtitle,
         )
 
-    def _draw_overlay(self, painter: QPainter, rect: QRectF) -> None:
-        theme = self.config.theme
-        overlay_font = QFont("Segoe UI", 9)
-        overlay_font.setBold(True)
-        painter.setFont(overlay_font)
-
-        painter.setPen(QColor(theme.text_secondary))
-        painter.drawText(
-            rect.adjusted(8.0, 4.0, -8.0, -4.0),
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft,
-            self.active_mode_name().upper(),
-        )
-
-        painter.setPen(QColor(theme.text_primary))
-        painter.drawText(
-            rect.adjusted(8.0, 4.0, -8.0, -4.0),
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
-            self._snapshot.status_text.upper(),
-        )
-
-
 class MainWindow(QMainWindow):
     """Main application window and playback controls."""
 
@@ -200,6 +178,10 @@ class MainWindow(QMainWindow):
         self.engine = AudioEngine(config)
         self.visualizers = build_visualizers(config)
         self._last_error_message: str | None = None
+        self._visualizer_only_mode = False
+        self._always_on_top = False
+        self._borderless_mode = False
+        self._controls_margin = 14
 
         self.setWindowTitle(config.window_title)
         self.setMinimumSize(config.min_width, config.min_height)
@@ -221,8 +203,13 @@ class MainWindow(QMainWindow):
         self.volume_caption = QLabel("Volume")
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.intensity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.visualizer_only_button = QPushButton("▼")
 
         self._setup_ui()
+        self._controls_animation = QPropertyAnimation(self.controls_panel, b"pos", self)
+        self._controls_animation.setDuration(260)
+        self._controls_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._select_default_source_mode()
         self._setup_shortcuts()
         self._setup_timer()
         self._refresh_from_engine()
@@ -231,6 +218,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         self.engine.close()
         super().closeEvent(event)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        super().resizeEvent(event)
+        self._update_controls_panel_position()
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if self._extract_first_local_file(event.mimeData().urls()) is not None:
@@ -304,7 +295,7 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(14, 14, 14, 14)
         root_layout.setSpacing(14)
 
-        info_panel = QFrame(self)
+        info_panel = QFrame(central)
         info_panel.setObjectName("controlPanel")
         info_layout = QHBoxLayout(info_panel)
         info_layout.setContentsMargins(18, 14, 18, 14)
@@ -334,19 +325,12 @@ class MainWindow(QMainWindow):
         info_layout.addLayout(state_stack)
         info_layout.addLayout(position_stack)
 
-        controls_panel = QFrame(self)
-        controls_panel.setObjectName("controlPanel")
-        controls_layout = QHBoxLayout(controls_panel)
+        self.controls_panel = QFrame(central)
+        self.controls_panel.setObjectName("controlPanel")
+        controls_layout = QHBoxLayout(self.controls_panel)
         controls_layout.setContentsMargins(18, 12, 18, 12)
         controls_layout.setSpacing(14)
 
-        source_label = QLabel("Source")
-        source_label.setObjectName("caption")
-        self.device_label.setObjectName("caption")
-        self.refresh_devices_button.setObjectName("iconButton")
-        self.refresh_devices_button.setToolTip("Refresh output devices")
-        self.refresh_devices_button.setMinimumWidth(36)
-        self.refresh_devices_button.setMaximumWidth(36)
         for visualizer in self.visualizers:
             self.mode_combo.addItem(visualizer.display_name, visualizer.mode_id)
         for mode, display_name, enabled in self.engine.source_modes():
@@ -366,15 +350,17 @@ class MainWindow(QMainWindow):
         self.volume_caption.setObjectName("caption")
         intensity_label = QLabel("Intensity")
         intensity_label.setObjectName("caption")
+        self.visualizer_only_button.setCheckable(True)
+        self.visualizer_only_button.setMinimumWidth(40)
+        self.visualizer_only_button.setMaximumWidth(40)
+        self.intensity_slider.setObjectName("intensitySlider")
+        self.intensity_slider.setMinimumWidth(130)
+        self.intensity_slider.setMaximumWidth(320)
 
-        controls_layout.addWidget(source_label)
         controls_layout.addWidget(self.source_combo)
         controls_layout.addWidget(self.open_button)
         controls_layout.addWidget(self.play_pause_button)
         controls_layout.addWidget(self.stop_button)
-        controls_layout.addWidget(self.device_label)
-        controls_layout.addWidget(self.device_combo)
-        controls_layout.addWidget(self.refresh_devices_button)
         controls_layout.addSpacing(8)
         controls_layout.addWidget(mode_label)
         controls_layout.addWidget(self.mode_combo)
@@ -383,23 +369,24 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.volume_slider, 1)
         controls_layout.addSpacing(8)
         controls_layout.addWidget(intensity_label)
-        controls_layout.addWidget(self.intensity_slider, 1)
+        controls_layout.addWidget(self.intensity_slider)
+        controls_layout.addSpacing(8)
+        controls_layout.addWidget(self.visualizer_only_button)
 
         root_layout.addWidget(self.canvas, 1)
-        root_layout.addWidget(info_panel)
-        root_layout.addWidget(controls_panel)
+        info_panel.hide()
         self.setCentralWidget(central)
         self.statusBar().showMessage("Ready")
+        self._update_controls_panel_position()
 
         self.open_button.clicked.connect(self.open_file_dialog)
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.stop_button.clicked.connect(self.stop_playback)
         self.source_combo.currentIndexChanged.connect(self._on_source_changed)
-        self.device_combo.currentIndexChanged.connect(self._on_device_changed)
-        self.refresh_devices_button.clicked.connect(self._refresh_output_devices)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
         self.intensity_slider.valueChanged.connect(self._on_intensity_changed)
+        self.visualizer_only_button.toggled.connect(self._on_visualizer_only_toggled)
 
         self.setStyleSheet(
             f"""
@@ -425,7 +412,7 @@ class MainWindow(QMainWindow):
                 border: 1px solid {theme.panel_border};
                 border-radius: 10px;
                 padding: 8px 14px;
-                min-width: 88px;
+                min-width: 76px;
             }}
             QPushButton:hover {{
                 background-color: {theme.accent_secondary};
@@ -449,12 +436,18 @@ class MainWindow(QMainWindow):
                 border: 1px solid {theme.panel_border};
                 border-radius: 10px;
                 padding: 7px 12px;
-                min-width: 170px;
+                min-width: 140px;
             }}
             QSlider::groove:horizontal {{
                 background: {theme.background_top};
                 height: 6px;
                 border-radius: 3px;
+            }}
+            QSlider#intensitySlider::groove:horizontal {{
+                background: {theme.background_top};
+                border: 1px solid {theme.panel_border};
+                height: 8px;
+                border-radius: 4px;
             }}
             QSlider::handle:horizontal {{
                 background: {theme.accent_primary};
@@ -474,6 +467,122 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("2"), self, activated=lambda: self._set_mode_by_index(1))
         QShortcut(QKeySequence("3"), self, activated=lambda: self._set_mode_by_index(2))
         QShortcut(QKeySequence("F"), self, activated=self.toggle_fullscreen)
+        QShortcut(QKeySequence("H"), self, activated=self.toggle_visualizer_only_mode)
+        QShortcut(QKeySequence("P"), self, activated=self.toggle_always_on_top)
+        QShortcut(QKeySequence("B"), self, activated=self.toggle_borderless_mode)
+
+    def toggle_always_on_top(self) -> None:
+        """Keep the window above other applications until toggled again."""
+
+        self._always_on_top = not self._always_on_top
+        self._apply_window_presentation_flags()
+        message = "Always-on-top enabled." if self._always_on_top else "Always-on-top disabled."
+        self.statusBar().showMessage(message, 2500)
+
+    def toggle_borderless_mode(self) -> None:
+        """Toggle the native window frame for a cleaner presentation mode."""
+
+        self._borderless_mode = not self._borderless_mode
+        self._apply_window_presentation_flags()
+        message = "Borderless mode enabled." if self._borderless_mode else "Borderless mode disabled."
+        self.statusBar().showMessage(message, 2500)
+
+    def _apply_window_presentation_flags(self) -> None:
+        """Reapply top-most and borderless flags without losing the current window state."""
+
+        was_visible = self.isVisible()
+        was_fullscreen = self.isFullScreen()
+        was_maximized = self.isMaximized()
+        geometry = self.geometry()
+
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, self._always_on_top)
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, self._borderless_mode)
+
+        if not was_visible:
+            return
+
+        if was_fullscreen:
+            self.showFullScreen()
+        elif was_maximized:
+            self.showMaximized()
+        else:
+            self.showNormal()
+            self.setGeometry(geometry)
+
+        self._update_controls_panel_position()
+
+    def _select_default_source_mode(self) -> None:
+        """Prefer system audio mode on launch when it is available."""
+
+        for index in range(self.source_combo.count()):
+            mode = self._coerce_source_mode(self.source_combo.itemData(index))
+            if mode == AudioSourceMode.SYSTEM:
+                self.source_combo.setCurrentIndex(index)
+                return
+
+    def toggle_visualizer_only_mode(self) -> None:
+        """Toggle the visualizer-only view."""
+
+        self._set_visualizer_only_mode(not self._visualizer_only_mode)
+
+    def _on_visualizer_only_toggled(self, checked: bool) -> None:
+        self._set_visualizer_only_mode(checked)
+
+    def _set_visualizer_only_mode(self, enabled: bool, animate: bool = True) -> None:
+        """Hide or show the bottom controls panel with a slide animation."""
+
+        self._visualizer_only_mode = enabled
+
+        blocker = QSignalBlocker(self.visualizer_only_button)
+        self.visualizer_only_button.setChecked(enabled)
+        del blocker
+
+        self._controls_animation.stop()
+        target = self._controls_hidden_pos() if enabled else self._controls_visible_pos()
+        if animate:
+            self._controls_animation.setStartValue(self.controls_panel.pos())
+            self._controls_animation.setEndValue(target)
+            self._controls_animation.start()
+        else:
+            self.controls_panel.move(target)
+
+        message = "Visualizer-only mode on. Press H to show controls." if enabled else "Controls restored."
+        self.statusBar().showMessage(message, 2500)
+
+    def _controls_visible_pos(self) -> QPoint:
+        central = self.centralWidget()
+        if central is None:
+            return QPoint(0, 0)
+        width = max(240, central.width() - self._controls_margin * 2)
+        height = self.controls_panel.sizeHint().height()
+        x = self._controls_margin
+        y = max(self._controls_margin, central.height() - height - self._controls_margin)
+        self.controls_panel.resize(width, height)
+        return QPoint(x, y)
+
+    def _controls_hidden_pos(self) -> QPoint:
+        central = self.centralWidget()
+        if central is None:
+            return QPoint(0, 0)
+        width = max(240, central.width() - self._controls_margin * 2)
+        height = self.controls_panel.sizeHint().height()
+        x = self._controls_margin
+        y = central.height() + self._controls_margin
+        self.controls_panel.resize(width, height)
+        return QPoint(x, y)
+
+    def _update_controls_panel_position(self) -> None:
+        """Keep the bottom controls aligned with the window size."""
+
+        if not hasattr(self, "controls_panel"):
+            return
+
+        self.controls_panel.raise_()
+        target = self._controls_hidden_pos() if self._visualizer_only_mode else self._controls_visible_pos()
+        if hasattr(self, "_controls_animation") and self._controls_animation.state() == QAbstractAnimation.State.Running:
+            self._controls_animation.setEndValue(target)
+            return
+        self.controls_panel.move(target)
 
     def _setup_timer(self) -> None:
         self._timer = QTimer(self)
@@ -595,7 +704,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_output_devices(self, show_message: bool = True) -> None:
         devices = self.engine.refresh_output_devices()
-        self._sync_device_combo()
+        self._sync_device_combo(force=True)
         if show_message:
             if devices:
                 self.statusBar().showMessage("Output device list refreshed", 2500)
@@ -614,9 +723,15 @@ class MainWindow(QMainWindow):
                 break
         del blocker
 
-    def _sync_device_combo(self) -> None:
+    def _sync_device_combo(self, force: bool = False) -> None:
         devices = self.engine.list_output_devices()
         selected_device_id = self.engine.selected_output_device_id()
+        if not force:
+            if self.device_combo.view().isVisible():
+                return
+            if self._device_combo_matches_state(devices, selected_device_id):
+                return
+
         blocker = QSignalBlocker(self.device_combo)
         self.device_combo.clear()
         selected_index = -1
@@ -629,6 +744,35 @@ class MainWindow(QMainWindow):
             self.device_combo.setCurrentIndex(selected_index)
         del blocker
 
+    def _device_combo_matches_state(
+        self,
+        devices: list[object],
+        selected_device_id: str | None,
+    ) -> bool:
+        if self.device_combo.count() != len(devices):
+            return False
+
+        current_ids: list[str] = []
+        current_labels: list[str] = []
+        for index in range(self.device_combo.count()):
+            item_data = self.device_combo.itemData(index)
+            current_ids.append(item_data if isinstance(item_data, str) else "")
+            current_labels.append(self.device_combo.itemText(index))
+
+        expected_ids = [device.identifier for device in devices]
+        expected_labels = [
+            f"{device.name} (Default)" if device.is_default else device.name
+            for device in devices
+        ]
+        if current_ids != expected_ids or current_labels != expected_labels:
+            return False
+
+        current_index = self.device_combo.currentIndex()
+        current_selected_id = self.device_combo.itemData(current_index) if current_index >= 0 else None
+        if not isinstance(current_selected_id, str):
+            current_selected_id = None
+        return current_selected_id == selected_device_id
+
     def _sync_output_controls(self, source_mode: AudioSourceMode) -> None:
         is_system = source_mode == AudioSourceMode.SYSTEM
         show_file_controls = not is_system
@@ -637,9 +781,9 @@ class MainWindow(QMainWindow):
         self.stop_button.setVisible(show_file_controls)
         self.volume_caption.setVisible(show_file_controls)
         self.volume_slider.setVisible(show_file_controls)
-        self.device_label.setVisible(is_system)
-        self.device_combo.setVisible(is_system)
-        self.refresh_devices_button.setVisible(is_system)
+        self.device_label.setVisible(False)
+        self.device_combo.setVisible(False)
+        self.refresh_devices_button.setVisible(False)
 
     @staticmethod
     def _coerce_source_mode(value: object) -> AudioSourceMode | None:

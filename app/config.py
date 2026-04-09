@@ -30,9 +30,9 @@ class AppConfig:
     """Runtime and visual tuning values for the application."""
 
     app_name: str = "PulseCanvas"
-    window_title: str = "PulseCanvas Music Visualizer"
-    min_width: int = 1024
-    min_height: int = 680
+    window_title: str = "Music Visualizer"
+    min_width: int = 450
+    min_height: int = 280
     ui_fps: int = 60
     audio_block_size: int = 512
     fft_size: int = 2048
